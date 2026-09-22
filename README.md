@@ -1,15 +1,6 @@
 # 🎮 Steam 每日战报
 
-每天定时拉取你的 Steam 数据，自动生成「今日战报」推送到飞书群。零服务器、零第三方依赖（纯 Node.js 内置能力），Fork 即用。
-
-```text
-GitHub Actions（定时轮询）
-   → 到达 REPORT_TIME 配置的时刻才发送
-   → Steam Web API 拉取游戏库 / 成就
-   → 与前一日快照做差值
-   → 飞书机器人 Webhook 推送卡片
-   → 快照存入 Actions Artifact（不进 Git 历史）
-```
+每天定时拉取你的 Steam 游戏时长与成就，自动生成「今日战报」推送到群聊（飞书 / 钉钉 / 企业微信）。零服务器、零第三方依赖，Fork 即用。
 
 ## 战报效果（文字示意）
 
@@ -32,100 +23,118 @@ GitHub Actions（定时轮询）
 
 没玩游戏的当天也会发一张「休息日 📚」卡片，方便确认链路存活。
 
-## 🚀 三分钟部署
+## 🚀 部署（约 5 分钟）
 
 ### 1. Fork 本仓库
 
-### 2. 设置 Steam 隐私
+点击本页右上角 **Fork → Create fork**，在你的账号下得到一份自己的仓库，后续操作都在你 Fork 的仓库里进行。
 
-打开 [Steam 隐私设置](https://steamcommunity.com/my/edit/settings)，将 **「游戏详情」设为公开**（否则 API 拿不到游戏时长和成就）。
+### 2. 将 Steam「游戏详情」设为公开
 
-### 3. 申请 Steam Web API Key
+1. 登录后打开 [Steam 隐私设置](https://steamcommunity.com/my/edit/settings)；
+2. 在「我的个人资料隐私设置」中找到 **游戏详情**；
+3. 改为 **公开**。
 
-打开 <https://steamcommunity.com/dev/apikey> 登录后即可获得。
+> 不公开的话程序拿不到任何数据，运行日志会报「GetOwnedGames 返回空游戏库」。
 
-### 4. 创建飞书机器人
+### 3. 获取 SteamID64 与 API Key
 
-飞书群 → 设置 → 群机器人 → 添加自定义机器人，得到 Webhook 地址。
-如果启用了「签名校验」，把密钥一并记下（第 5 步会用到）。
+- **SteamID64**：打开 [steamid.io](https://steamid.io)，粘贴你的 Steam 主页链接（或搜昵称），复制结果里的 17 位数字（以 `7656119` 开头）；
+- **API Key**：打开 <https://steamcommunity.com/dev/apikey>，登录后页面要求填一个域名，**随便填即可**，提交后会显示一串 32 位的 Key。
 
-### 5. 配置 Secrets
+### 4. 创建群机器人（飞书 / 钉钉 / 企业微信，三选一）
 
-在你 Fork 的仓库中：**Settings → Secrets and variables → Actions → Secrets → New repository secret**
+**飞书**
+1. 群聊 → 设置 → 群机器人 → **添加机器人 → 自定义机器人**；
+2. 创建后复制 **Webhook 地址**，形如 `https://open.feishu.cn/open-apis/bot/v2/hook/xxxx`；
+3. 若开启了「签名校验」安全设置，把密钥一并复制。
 
-| Name | 说明 | 必填 |
-|---|---|---|
-| `STEAM_API_KEY` | Steam Web API Key | ✅ |
-| `STEAM_ID` | 你的 SteamID64（17 位数字，[steamid.io](https://steamid.io) 可查） | ✅ |
-| `FEISHU_WEBHOOK` | 飞书机器人 Webhook 地址 | ✅ |
-| `FEISHU_SECRET` | 飞书机器人签名密钥（未开启签名校验可不填） | ❌ |
+**钉钉**
+1. 群聊 → 设置 → 机器人 → **添加机器人 → 自定义**（通过 Webhook 接入）；
+2. 安全设置三选一：推荐 **加签**（复制 `SEC` 开头的密钥）；选「自定义关键词」建议直接用 **战报**（消息标题里自带）；IP 白名单一般用不上；
+3. 复制 **Webhook 地址**，形如 `https://oapi.dingtalk.com/robot/send?access_token=xxxx`。
 
-可选 Variables（**Settings → Secrets and variables → Actions → Variables**）：
+**企业微信**
+1. 群聊 → 右上角菜单 → **添加群机器人 → 新创建一个机器人**；
+2. 复制 **Webhook 地址**，形如 `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx`，无需密钥。
 
-| Name | 默认值 | 说明 |
-|---|---|---|
-| `REPORT_TIMEZONE` | `Asia/Shanghai` | 战报日期所用时区（IANA 名称） |
-| `REPORT_TIME` | `22:00` | 每日发送时刻（`HH:MM`），多个用英文逗号分隔（如 `09:00,22:00`）；一天可发多次，每次都与前一天比较 |
+> 用哪家平台按 Webhook 域名自动识别，不需要额外配置。
 
-### 6. 启用并测试
+### 5. 配置仓库 Secrets
 
-Fork 后 GitHub 默认会禁用定时任务：打开仓库的 **Actions** 页面，按提示启用工作流。
-然后选择 **Daily Steam Report → Run workflow** 手动运行一次：
+进入你 Fork 的仓库 → **Settings → Secrets and variables → Actions → Secrets 标签 → New repository secret**，逐个添加：
 
-- 首次运行会发送「战报已初始化」卡片，只建立基线，**不会**把整个游戏库当成今日新增；
-- 第二天开始收到每日战报。
+| Name | Secret 值 |
+|---|---|
+| `STEAM_API_KEY` | 第 3 步获得的 API Key |
+| `STEAM_ID` | 第 3 步获得的 17 位 SteamID64 |
+| `NOTIFY_WEBHOOK` | 第 4 步获得的 Webhook 地址 |
+| `NOTIFY_SECRET`（可选） | 飞书 = 签名校验密钥；钉钉 = 加签密钥；企业微信不填 |
 
-发送时刻由 Variables 中的 `REPORT_TIME` 配置（默认每天 `22:00`，`REPORT_TIMEZONE` 所示时区），
-无需改代码。工作流每半小时轮询一次，实际发送为到点后的第一次轮询，通常晚几分钟
-（GitHub 定时高峰期可能有更长延迟）。
+### 6. 启用工作流并手动测试
 
-## 🔧 工作原理
+1. 打开仓库的 **Actions** 页面，点击 **I understand my workflows, go ahead and enable them**（Fork 的仓库默认禁用定时任务）；
+2. 左侧选择 **Daily Steam Report** → 右侧 **Run workflow → Run workflow**；
+3. 等约 1 分钟，运行变绿（✓）后群里应收到「🎮 Steam 战报已初始化」卡片；
+4. 部署完成。之后每天在配置的时刻自动发战报（默认 `22:00`）。
 
-1. **数据来源**：Steam API 只提供累计时长，因此「今日数据」= 本次累计值 − 前一日快照累计值；
-2. **快照持久化**：每次发送成功后，把当天最新累计值存为 GitHub Actions Artifact（保留 90 天），**不会提交进 Git 仓库**，公开仓库也不会泄露你的游戏数据；
-3. **成就对比**：仅为「自前一日以来有时长增量」的游戏（最多 10 款）查询成就，对比前一日解锁集合得出新增成就及其名称；
-4. **可配置时间**：GitHub 的 cron 无法读取变量，所以工作流每半小时轮询，由脚本按 `REPORT_TIME`（默认 `22:00`，可配多个时刻）判断到点才发送；快照记录最近发送时刻，同一时刻不会重复推送。手动运行共用此判定，勾选 `force`（或本地 `FORCE_SEND=true`）可强制重发；
-5. **一天多次、只比前一天**：同一天多次发送时，每次都与「前一日最后一次快照」比较，晚间战报包含全天数据（不拆分）；当天最后一次快照会在次日自动成为新的比较基线。没有前一日数据时发送初始化卡片；
-6. **失败安全**：只有飞书发送成功后才更新快照；发送失败时工作流标红，下次轮询会自动补发完整差值。
+> 首次运行只建立基线，**不会**把整个游戏库当成「今日新增」；从第二天起收到差值战报。若运行变红，点进本次运行查看日志，报错信息会写明缺什么配置。
 
-## ❓ FAQ
+## 🔧 日常调整
+
+所有调整都在仓库的 **Settings → Secrets and variables → Actions** 页完成，无需改代码。
+
+**修改发送时间 / 一天发多次**
+切到 **Variables** 标签 → New repository variable：Name 填 `REPORT_TIME`，Value 如 `22:00`（默认）或 `09:00,22:00`（一天两次，逗号分隔）。实际发送为到点后的第一次轮询，通常晚几分钟。
+
+**更换通知平台**
+把 Secret `NOTIFY_WEBHOOK` 的值换成新平台的 Webhook 地址（需要密钥的同步换 `NOTIFY_SECRET`），其他都不用动。
+
+**修改时区**
+Variables 中添加 `REPORT_TIMEZONE`（IANA 名称，如 `Asia/Tokyo`），默认 `Asia/Shanghai`。
+
+**立即补发一份战报**
+Actions → Daily Steam Report → Run workflow，**勾选 force** 再运行，会跳过「今日已发送」检查立即发送。
+
+**重置所有数据**
+到 Actions 的运行记录页，删除名为 `steam-report-state` 的 Artifact（或等它 90 天自动过期），下次运行会重新初始化基线。
+
+**本地运行**
+
+```bash
+git clone https://github.com/gegegexuxu/SteamDailyReport.git
+cd SteamDailyReport
+cp .env.example .env   # 按注释填入你的配置
+npm start              # 需要 Node.js >= 22.9
+npm test               # 运行单元测试
+```
+
+## 🔩 工作原理（简述）
+
+- Steam API 只提供累计时长，「今日数据」= 当前累计值 − 前一日快照累计值；
+- GitHub 的 cron 读不了仓库变量，所以工作流每半小时轮询一次，由脚本按 `REPORT_TIME` 判断到点才发送；
+- 同一天多次发送时，每次都与「前一天最后一次快照」比较，晚间战报包含全天数据；
+- 快照保存在 Actions Artifact（90 天），不进 Git 仓库；发送失败下次轮询自动补发，同一天不会重复推送。
+
+## ❓ 常见问题
 
 **为什么首日没有战报？**
-首次运行只建立基线（否则整个库都会被当作“今日新增”），第二天起生成差值战报。
-
-**战报时间怎么改？**
-在 **Settings → Secrets and variables → Actions → Variables** 中设置 `REPORT_TIME`（`HH:MM`，默认 `22:00`），无需改代码。工作流每半小时轮询，到点后第一次轮询发送，通常晚几分钟。想一天发多次就用英文逗号分隔多个时刻，如 `09:00,22:00`。
-
-**一天发多次时，数据会按发送时刻拆分吗？**
-不会。每次战报都与「前一天最后一次快照」做差值，晚间战报包含全天数据；当天多次发送互不影响，当天最后一次快照会在次日成为新的比较基线。
+首次运行只建立基线（否则整个库会被当作"今日新增"），第二天起生成差值战报。
 
 **手动运行为什么没有发送？**
-手动运行与定时轮询共用同一判定：没有「已到点但今日未发」的时刻时跳过。想立即收到战报，运行时勾选 `force`（本地设 `FORCE_SEND=true`）。首次运行（无历史快照）不受此限制，会直接初始化。
-
-**怎么重置所有数据？**
-Actions 页面删除名为 `steam-report-state` 的 Artifact（或等待其 90 天过期），下次运行会重新初始化基线。
-
-**快照会丢吗？**
-Artifact 保留 90 天，每天运行会持续产生新快照，正常运行不会丢。若长期停用后恢复，会自动重建基线（中间日期无差值）。
+手动运行与定时轮询共用同一判定：没有「已到点但今日未发」的时刻时跳过。想立即收到战报，勾选 `force` 运行。首次运行（无历史快照）不受此限制。
 
 **提示飞书返回错误 code=19021 / 签名错误？**
-`FEISHU_SECRET` 与机器人「签名校验」的密钥不一致，核对后更新 Secret。
+`NOTIFY_SECRET` 与飞书机器人「签名校验」的密钥不一致，核对后更新 Secret。
 
-**飞书机器人设置了「自定义关键词」？**
-需要保证消息中包含该关键词。最简单的办法是把关键词加进卡片标题（修改 `scripts/card.js` 中的标题文案）。
+**钉钉提示 errcode=310000？**
+安全设置不符：用「加签」就核对 `NOTIFY_SECRET` 与 `SEC` 密钥一致；用「自定义关键词」就确认消息标题里包含该关键词（推荐直接用「战报」）。
 
 **Steam 数据拉取失败？**
 确认 Steam「游戏详情」隐私为公开、`STEAM_ID` 是 17 位 SteamID64、`STEAM_API_KEY` 有效。
 
-**想本地跑？**
-
-```bash
-cp .env.example .env   # 填入你自己的配置
-npm start              # 需要 Node.js >= 22.9（使用 --env-file-if-exists）
-npm test               # 运行单元测试
-```
-
-本地产生的 `data/state.json` 已被 `.gitignore` 忽略，不会误提交。
+**快照会丢吗？**
+Artifact 保留 90 天，每天运行会持续产生新快照，正常运行不会丢。若长期停用后恢复，会自动重建基线并注明「与 M月d日 以来比较」。
 
 ## ⚠️ 隐私说明
 
