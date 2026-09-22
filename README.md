@@ -1,13 +1,13 @@
 # 🎮 Steam 每日战报
 
-每天定时拉取你的 Steam 游戏时长与成就，自动生成「今日战报」推送到群聊（飞书 / 钉钉 / 企业微信）。零服务器、零第三方依赖，Fork 即用。
+每天 0 点自动结算你的 Steam 游戏时长与成就，早上 8 点把「昨日战报」推送到群聊（飞书 / 钉钉 / 企业微信）。零服务器、零第三方依赖，Fork 即用。
 
 ## 战报效果（文字示意）
 
 ```text
 🎮 Steam 每日战报 · 9月22日
 ────────────────────────────
-灰烬猎人 今天游玩 2.8 小时（2 款游戏）
+灰烬猎人 当日游玩 2.8 小时（2 款游戏）
  1. ELDEN RING        +1.8 小时（累计 51.8 小时）
  2. Counter-Strike 2  +1 小时（累计 210.7 小时）
 
@@ -18,7 +18,7 @@
 📦 新增入库 1 款：Hogwarts Legacy
 ────────────────────────────
 库存游戏 4 款 ｜ 总时长 1096.8 小时
-数据来源 Steam Web API · 生成于 22:00（Asia/Shanghai）
+数据来源 Steam Web API · 生成于 08:00（Asia/Shanghai）
 ```
 
 没玩游戏的当天也会发一张「休息日 📚」卡片，方便确认链路存活。
@@ -78,30 +78,26 @@
 ### 6. 启用工作流并手动测试
 
 1. 打开仓库的 **Actions** 页面，点击 **I understand my workflows, go ahead and enable them**（Fork 的仓库默认禁用定时任务）；
-2. 左侧选择 **Daily Steam Report** → 右侧 **Run workflow → Run workflow**；
-3. 等约 1 分钟，运行变绿（✓）后群里应收到「🎮 Steam 战报已初始化」卡片；
-4. 部署完成。之后每天在配置的时刻自动发战报（默认 `22:00`）。
+2. 左侧选择 **Steam Snapshot** → 右侧 **Run workflow → Run workflow**，等运行变绿（✓）后群里应收到「🎮 Steam 战报已初始化」卡片；
+3. 部署完成。之后每天 **0 点自动结算、8 点自动推送昨日战报**（北京时间）。
 
-> 首次运行只建立基线，**不会**把整个游戏库当成「今日新增」；从第二天起收到差值战报。若运行变红，点进本次运行查看日志，报错信息会写明缺什么配置。
+> 首次快照只建立基线，**不会**把整个游戏库当成「当日新增」；下次 0 点结算后，8 点你就会收到第一份战报。若运行变红，点进本次运行查看日志，报错信息会写明缺什么配置。
 
 ## 🔧 日常调整
 
-所有调整都在仓库的 **Settings → Secrets and variables → Actions** 页完成，无需改代码。
+所有调整都在你 Fork 的仓库里完成，无需改代码。
 
-**修改发送时间 / 一天发多次**
-切到 **Variables** 标签 → New repository variable：Name 填 `REPORT_TIME`，Value 如 `22:00`（默认）或 `09:00,22:00`（一天两次，逗号分隔）。实际发送为到点后的第一次轮询，通常晚几分钟。
+**修改结算 / 发送时间、一天发多次**
+改两个工作流里的 cron 即可（含 UTC 换算表），详见 **[高级配置 ADVANCED.md](ADVANCED.md)**。
 
 **更换通知平台**
 把 Secret `NOTIFY_WEBHOOK` 的值换成新平台的 Webhook 地址（需要密钥的同步换 `NOTIFY_SECRET`），其他都不用动。
 
-**修改时区**
-Variables 中添加 `REPORT_TIMEZONE`（IANA 名称，如 `Asia/Tokyo`），默认 `Asia/Shanghai`。
-
 **立即补发一份战报**
-Actions → Daily Steam Report → Run workflow，**勾选 force** 再运行，会跳过「今日已发送」检查立即发送。
+Actions → Steam Daily Report → Run workflow，**勾选 force** 再运行；想带上最新数据就先手动跑一次 Steam Snapshot。
 
 **重置所有数据**
-到 Actions 的运行记录页，删除名为 `steam-report-state` 的 Artifact（或等它 90 天自动过期），下次运行会重新初始化基线。
+到 Actions 的运行记录页，删除名为 `steam-report-state` 的 Artifact（或等它 90 天自动过期），下次快照会重新初始化基线。
 
 **本地运行**
 
@@ -109,24 +105,27 @@ Actions → Daily Steam Report → Run workflow，**勾选 force** 再运行，�
 git clone https://github.com/gegegexuxu/SteamDailyReport.git
 cd SteamDailyReport
 cp .env.example .env   # 按注释填入你的配置
-npm start              # 需要 Node.js >= 22.9
-npm test               # 运行单元测试
+npm run snapshot       # 结算：抓数据存快照
+npm start              # 播报：发送最近窗口的战报
+npm test               # 运行单元测试（需要 Node.js >= 22.9）
 ```
+
+更多自定义（改时区、一天多次、新增通知平台等）见 **[高级配置 ADVANCED.md](ADVANCED.md)**。
 
 ## 🔩 工作原理（简述）
 
-- Steam API 只提供累计时长，「今日数据」= 当前累计值 − 前一日快照累计值；
-- GitHub 的 cron 读不了仓库变量，所以工作流每半小时轮询一次，由脚本按 `REPORT_TIME` 判断到点才发送；
-- 同一天多次发送时，每次都与「前一天最后一次快照」比较，晚间战报包含全天数据；
-- 快照保存在 Actions Artifact（90 天），不进 Git 仓库；发送失败下次轮询自动补发，同一天不会重复推送。
+- 每天 **0 点结算**：抓一次 Steam 累计数据存为快照（保存在 GitHub Actions Artifact，保留 90 天，不进 Git 仓库）；
+- 每天 **8 点播报**：对比最近两份快照，差值即昨天一整天的时长与新增成就；
+- 某次结算缺失时窗口自动跨天合并补发，并在战报中注明「跨 M月d日–M月d日 合并」；
+- 同一个窗口只会发送一次；发送失败下次运行自动重试，数据不会丢。
 
 ## ❓ 常见问题
 
-**为什么首日没有战报？**
-首次运行只建立基线（否则整个库会被当作"今日新增"），第二天起生成差值战报。
+**为什么部署当天没有战报？**
+首次快照只建立基线（否则整个库会被当作"当日新增"），需要两份快照才能构成统计窗口；最早第二天 8 点收到第一份战报。
 
-**手动运行为什么没有发送？**
-手动运行与定时轮询共用同一判定：没有「已到点但今日未发」的时刻时跳过。想立即收到战报，勾选 `force` 运行。首次运行（无历史快照）不受此限制。
+**手动运行 Report 为什么没发送？**
+要么快照不足两份（窗口未形成），要么该窗口已发送过（日志会说明）。想强制重发，勾选 `force` 运行。
 
 **提示飞书返回错误 code=19021 / 签名错误？**
 `NOTIFY_SECRET` 与飞书机器人「签名校验」的密钥不一致，核对后更新 Secret。
@@ -138,7 +137,9 @@ npm test               # 运行单元测试
 确认 Steam「游戏详情」隐私为公开、`STEAM_ID` 是 17 位 SteamID64、`STEAM_API_KEY` 有效。
 
 **快照会丢吗？**
-Artifact 保留 90 天，每天运行会持续产生新快照，正常运行不会丢。若长期停用后恢复，会自动重建基线并注明「与 M月d日 以来比较」。
+Artifact 保留 90 天，每天结算会持续产生新快照，正常运行不会丢。若长期停用后恢复，窗口会自动跨天合并补发，并在战报中注明。
+
+想改结算/发送时间、一天发多次、改时区？见 **[高级配置 ADVANCED.md](ADVANCED.md)**。
 
 ## ⚠️ 隐私说明
 
