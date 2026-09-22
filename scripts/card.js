@@ -1,25 +1,10 @@
 // 飞书卡片构建（纯函数，方便单元测试）。
 // 使用飞书经典卡片 JSON（schema 1.0），自定义机器人 Webhook 直接可发。
 import { formatMinutes } from "./diff.js";
+import { baselineNote, formatZhDate, sanitize } from "./text.js";
 
-const MAX_NAME_LENGTH = 50;
 const MAX_ACHIEVEMENT_NAMES = 8;
 const MAX_LIBRARY_NAMES = 10;
-
-/** 游戏名/成就名轻度清洗：去换行、替换 lark_md 特殊字符、截断 */
-function sanitize(text) {
-  return String(text ?? "")
-    .replace(/[\r\n]+/g, " ")
-    .replace(/[`*[\]]/g, (ch) => ({ "`": "｀", "*": "＊", "[": "［", "]": "］" })[ch])
-    .slice(0, MAX_NAME_LENGTH);
-}
-
-/** "2026-09-22" -> "9月22日" */
-export function formatZhDate(dateStr) {
-  const [, month, day] = String(dateStr).split("-").map(Number);
-  if (!month || !day) return String(dateStr);
-  return `${month}月${day}日`;
-}
 
 const div = (content) => ({ tag: "div", text: { tag: "lark_md", content } });
 const md = (content) => ({ tag: "lark_md", content });
@@ -30,7 +15,7 @@ const note = (content) => ({ tag: "note", elements: [plain(content)] });
  * 每日战报卡片。
  * diff 来自 computeDiff()；achievements 为 [{ gameName, total, unlockedCount, added: [{ displayName }] }]
  */
-export function buildReportCard({ personaName, reportDate, diff, achievements, generatedAt, timeZone }) {
+export function buildReportCard({ personaName, reportDate, diff, achievements, generatedAt, timeZone, baselineDate }) {
   const played = diff.playedToday ?? [];
   const achievementsWithNew = (achievements ?? []).filter((a) => a.added.length > 0);
   const totalNewAchievements = achievementsWithNew.reduce((sum, a) => sum + a.added.length, 0);
@@ -82,7 +67,11 @@ export function buildReportCard({ personaName, reportDate, diff, achievements, g
       { is_short: true, text: md(`**总时长**\n${formatMinutes(diff.library.totalMinutes)}`) },
     ],
   });
-  elements.push(note(`数据来源 Steam Web API · 生成于 ${generatedAt}（${timeZone}）· GitHub Actions`));
+  elements.push(
+    note(
+      `数据来源 Steam Web API · ${baselineNote(baselineDate, reportDate)}生成于 ${generatedAt}（${timeZone}）· GitHub Actions`,
+    ),
+  );
 
   return {
     msg_type: "interactive",

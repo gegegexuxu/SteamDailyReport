@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 
 export const DEFAULT_TIMEZONE = "Asia/Shanghai";
 export const DEFAULT_REPORT_TIME = "22:00";
-export const STATE_VERSION = 2;
+const STATE_VERSION = 2;
 
 /** 返回指定时区的当前日期，格式 YYYY-MM-DD */
 export function todayIn(timeZone = DEFAULT_TIMEZONE, now = new Date()) {
@@ -52,7 +52,6 @@ export function parseReportTimes(value) {
   return parsed.sort((a, b) => a.hour - b.hour || a.minute - b.minute);
 }
 
-/** {hour, minute} → "HH:MM" */
 export function formatReportTime({ hour, minute }) {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
@@ -123,18 +122,15 @@ function isValidState(state) {
   );
 }
 
-/** 写入快照（自动创建目录） */
 export function saveState(filePath, state) {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
-/** 组装某日某时刻的累计值快照 */
 export function buildSnapshot({ date, personaName, games, achievements }) {
   return { date, personaName, games, achievements };
 }
 
-/** 组装完整状态对象 */
 export function buildState({ prev, current, lastSent }) {
   return { version: STATE_VERSION, prev, current, lastSent };
 }

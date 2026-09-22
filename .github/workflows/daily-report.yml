@@ -59,8 +59,8 @@ jobs:
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
           STEAM_ID: ${{ secrets.STEAM_ID }}
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
           REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE }}
           REPORT_TIME: ${{ vars.REPORT_TIME }}
           FORCE_SEND: ${{ inputs.force && 'true' || 'false' }}

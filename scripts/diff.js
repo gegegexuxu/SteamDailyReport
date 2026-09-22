@@ -61,7 +61,6 @@ export function diffAchievements(prevApinames, currentUnlocked) {
     .map((item) => ({ ...item }));
 }
 
-/** 分钟数转人类可读时长 */
 export function formatMinutes(minutes) {
   if (!Number.isFinite(minutes) || minutes <= 0) return "0 分钟";
   if (minutes < 60) return `${Math.round(minutes)} 分钟`;

@@ -6,16 +6,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { computeDiff, diffAchievements, formatMinutes, libraryStats } from "../scripts/diff.js";
-import { buildInitCard, buildReportCard, formatZhDate } from "../scripts/card.js";
+import { buildInitCard, buildReportCard } from "../scripts/card.js";
+import { baselineNote, formatZhDate, previousDateString } from "../scripts/text.js";
+import { buildInitMarkdown, buildReportMarkdown } from "../scripts/notifiers/markdown.js";
+import { buildSignedUrl, signDingtalk } from "../scripts/notifiers/dingtalk.js";
+import { resolveNotifier } from "../scripts/notifiers/index.js";
+import { wecom } from "../scripts/notifiers/wecom.js";
 import { signPayload } from "../scripts/feishu.js";
-import { buildState, buildSnapshot, loadState, saveState } from "../scripts/state.js";
 import {
   DEFAULT_REPORT_TIME,
+  buildSnapshot,
+  buildState,
   formatReportTime,
   hasDueReportTime,
+  loadState,
   nowTimeIn,
   parseReportTime,
   parseReportTimes,
+  saveState,
   todayIn,
 } from "../scripts/state.js";
 
@@ -90,7 +98,6 @@ test("formatMinutes", () => {
 test("signPayload：与飞书规范一致（HMAC-SHA256，key=timestamp\\nsecret，空消息）", () => {
   // 固定向量：由 node:crypto 计算并人工核对算法约定
   assert.equal(signPayload("test-secret", 1700000000), "mbm4Y4oluIPQ00qlBIhX8vAZ0EKv3nw0LuTb91jPL84=");
-  // 不同时间戳签名不同
   assert.notEqual(signPayload("test-secret", 1700000001), signPayload("test-secret", 1700000000));
 });
 
@@ -145,6 +152,149 @@ test("formatZhDate", () => {
   assert.equal(formatZhDate("2026-09-22"), "9月22日");
   assert.equal(formatZhDate("2026-12-01"), "12月1日");
   assert.equal(formatZhDate("bad"), "bad");
+});
+
+test("previousDateString / baselineNote：跨天基线标注", () => {
+  assert.equal(previousDateString("2026-09-23"), "2026-09-22");
+  assert.equal(previousDateString("2026-03-01"), "2026-02-28"); // 跨月
+  assert.equal(previousDateString("bad"), null);
+  // 基线即昨日（正常情况）→ 不加标注
+  assert.equal(baselineNote("2026-09-22", "2026-09-23"), "");
+  // 基线早于昨日（停更后恢复）→ 标注差值口径
+  assert.equal(baselineNote("2026-09-20", "2026-09-23"), "与 9月20日 以来比较 · ");
+  assert.equal(baselineNote(undefined, "2026-09-23"), "");
+});
+
+test("buildReportMarkdown：游玩列表超过 15 款时截断", () => {
+  const prev = {};
+  const cur = {};
+  for (let i = 0; i < 20; i++) {
+    prev[String(i)] = game(`G${i}`, 100);
+    cur[String(i)] = game(`G${i}`, 100 + i + 1);
+  }
+  const diff = computeDiff(prev, cur);
+  const { text } = buildReportMarkdown({
+    personaName: "玩家",
+    reportDate: "2026-09-22",
+    diff,
+    achievements: [],
+    generatedAt: "22:00",
+    timeZone: "Asia/Shanghai",
+  });
+  assert.ok(text.includes("仅列前 15 款"));
+  assert.ok(text.includes("G19")); // 按时长降序，增量最大的在前 15 款内
+  assert.ok(!text.includes("G0")); // 增量最小的被截掉
+});
+
+test("wecom：超长消息按 UTF-8 字节截断到 4096 以内", () => {
+  const diff = computeDiff({ "730": game("CS2", 1000) }, { "730": game("CS2", 1000) });
+  const achievements = Array.from({ length: 10 }, (_, i) => ({
+    gameName: `游戏名称特别长的测试游戏编号${i}`,
+    total: 100,
+    unlockedCount: 50,
+    added: Array.from({ length: 8 }, (_, j) => ({ displayName: `一个非常非常长的成就名称测试用例${i}-${j}` })),
+  }));
+  const payload = wecom.buildReport({
+    personaName: "玩家",
+    reportDate: "2026-09-22",
+    diff,
+    achievements,
+    generatedAt: "22:00",
+    timeZone: "Asia/Shanghai",
+  });
+  assert.equal(payload.msgtype, "markdown");
+  assert.ok(Buffer.byteLength(payload.markdown.content, "utf8") <= 4096);
+  assert.ok(payload.markdown.content.includes("已截断"));
+});
+
+test("战报注明跨天基线：基线非昨日时显示，正常情况不显示", () => {
+  const diff = computeDiff({ "730": game("CS2", 1000) }, { "730": game("CS2", 1000) });
+  const card = buildReportCard({
+    personaName: "玩家",
+    reportDate: "2026-09-23",
+    diff,
+    achievements: [],
+    generatedAt: "22:00",
+    timeZone: "Asia/Shanghai",
+    baselineDate: "2026-09-20",
+  });
+  assert.ok(JSON.stringify(card).includes("与 9月20日 以来比较"));
+  const md = buildReportMarkdown({
+    personaName: "玩家",
+    reportDate: "2026-09-23",
+    diff,
+    achievements: [],
+    generatedAt: "22:00",
+    timeZone: "Asia/Shanghai",
+    baselineDate: "2026-09-22",
+  });
+  assert.ok(!md.text.includes("以来比较"));
+});
+
+test("buildReportMarkdown（钉钉/企微共用）：包含核心信息", () => {
+  const diff = computeDiff(
+    { "730": game("CS2", 1000) },
+    { "730": game("CS2", 1090), "4000": game("Golf It!", 10) },
+  );
+  const { title, text } = buildReportMarkdown({
+    personaName: "玩家*甲",
+    reportDate: "2026-09-22",
+    diff,
+    achievements: [{ gameName: "CS2", total: 100, unlockedCount: 35, added: [{ displayName: "首胜" }] }],
+    generatedAt: "22:00",
+    timeZone: "Asia/Shanghai",
+  });
+  assert.match(title, /Steam 每日战报 · 9月22日/);
+  assert.ok(text.includes("+1.5 小时"));
+  assert.ok(text.includes("首胜"));
+  assert.ok(text.includes("Golf It!"));
+  assert.ok(text.includes("库存游戏 2 款"));
+  assert.ok(text.includes("生成于 22:00"));
+  assert.ok(text.includes("玩家＊甲")); // markdown 特殊字符被替换
+});
+
+test("buildReportMarkdown：休息日", () => {
+  const diff = computeDiff({ "730": game("CS2", 1000) }, { "730": game("CS2", 1000) });
+  const { text } = buildReportMarkdown({
+    personaName: "玩家",
+    reportDate: "2026-09-22",
+    diff,
+    achievements: [],
+    generatedAt: "22:00",
+    timeZone: "Asia/Shanghai",
+  });
+  assert.ok(text.includes("休息日"));
+});
+
+test("buildInitMarkdown：包含库存统计", () => {
+  const { title, text } = buildInitMarkdown({
+    personaName: "玩家",
+    reportDate: "2026-09-22",
+    library: { gameCount: 88, totalMinutes: 60000 },
+  });
+  assert.ok(title.includes("初始化"));
+  assert.ok(text.includes("88"));
+  assert.ok(text.includes("1000 小时"));
+});
+
+test("signDingtalk：与钉钉规范一致（HMAC-SHA256，key=secret，消息=timestamp\\nsecret）", () => {
+  // 固定向量：由 node:crypto 计算并人工核对算法约定（timestamp 为毫秒）
+  assert.equal(signDingtalk("test-secret", 1700000000000), "BYMqUCZnSqbfPf1GCfZftO7Rg2g6P+Rp3/4+bLNtSGA=");
+  // 与飞书签名算法不同（key 与消息互换），结果必然不同
+  assert.notEqual(signDingtalk("test-secret", 1700000000), signPayload("test-secret", 1700000000));
+
+  const url = buildSignedUrl("https://oapi.dingtalk.com/robot/send?access_token=xxx", "test-secret", 1700000000000);
+  assert.ok(url.startsWith("https://oapi.dingtalk.com/robot/send?access_token=xxx&timestamp=1700000000000&sign="));
+  assert.ok(url.endsWith(encodeURIComponent(signDingtalk("test-secret", 1700000000000))));
+  // Webhook 无查询参数时用 ? 拼接
+  assert.ok(buildSignedUrl("https://example.com/hook", "s", 1).includes("?timestamp=1&sign="));
+});
+
+test("resolveNotifier：按域名识别平台，未识别时回退飞书", () => {
+  assert.equal(resolveNotifier("https://open.feishu.cn/open-apis/bot/v2/hook/xxx").name, "feishu");
+  assert.equal(resolveNotifier("https://oapi.dingtalk.com/robot/send?access_token=xxx").name, "dingtalk");
+  assert.equal(resolveNotifier("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx").name, "wecom");
+  assert.equal(resolveNotifier("https://example.com/hook").name, "feishu");
 });
 
 test("parseReportTime：支持 HH 与 HH:MM，非法返回 null", () => {

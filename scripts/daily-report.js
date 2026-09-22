@@ -1,4 +1,4 @@
-// 主流程：读取快照 → 判断是否到发送时刻 → 拉取 Steam 数据 → 与前一日快照差值 → 发送飞书卡片 → 保存快照。
+// 主流程：读取快照 → 判断是否到发送时刻 → 拉取 Steam 数据 → 与前一日快照差值 → 发送群通知 → 保存快照。
 // CI 以固定频率轮询本脚本实现「发送时间可配置」（cron 无法读变量，见 daily-report.yml 与 REPORT_TIME）：
 // 没有「已到点但今日未发」的时刻时直接跳过；同一天可发送多次，但每次都与前一日最后一次快照比较。
 import { appendFileSync } from "node:fs";
@@ -6,9 +6,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getAchievementSchema, getOwnedGames, getPlayerAchievements, getPlayerSummary } from "./steam.js";
-import { sendCard } from "./feishu.js";
 import { computeDiff, diffAchievements, formatMinutes, libraryStats } from "./diff.js";
-import { buildInitCard, buildReportCard } from "./card.js";
+import { resolveNotifier } from "./notifiers/index.js";
 import {
   DEFAULT_REPORT_TIME,
   DEFAULT_TIMEZONE,
@@ -27,8 +26,13 @@ import {
 const ACHIEVEMENT_GAME_LIMIT = 10;
 
 async function main() {
-  const required = ["STEAM_API_KEY", "STEAM_ID", "FEISHU_WEBHOOK"];
-  const missing = required.filter((name) => !process.env[name]);
+  const apiKey = process.env.STEAM_API_KEY;
+  const steamId = process.env.STEAM_ID;
+  const webhook = process.env.NOTIFY_WEBHOOK || "";
+  const secret = process.env.NOTIFY_SECRET || "";
+
+  const missing = ["STEAM_API_KEY", "STEAM_ID"].filter((name) => !process.env[name]);
+  if (!webhook) missing.push("NOTIFY_WEBHOOK");
   if (missing.length > 0) {
     console.error(
       `❌ 缺少必要环境变量: ${missing.join(", ")}。` +
@@ -36,11 +40,7 @@ async function main() {
     );
     process.exit(1);
   }
-
-  const apiKey = process.env.STEAM_API_KEY;
-  const steamId = process.env.STEAM_ID;
-  const webhook = process.env.FEISHU_WEBHOOK;
-  const secret = process.env.FEISHU_SECRET || "";
+  const notifier = resolveNotifier(webhook);
   const timeZone = process.env.REPORT_TIMEZONE || DEFAULT_TIMEZONE;
   const forceSend = /^(1|true|yes)$/i.test(process.env.FORCE_SEND ?? "");
 
@@ -62,7 +62,7 @@ async function main() {
   if (state && !forceSend && !hasDueReportTime(timeZone, reportTimes, state.lastSent)) {
     console.log(
       `⏭️ ${nowTimeIn(timeZone)} 轮询：发送时刻为 ${reportTimes.map(formatReportTime).join("、")}（${timeZone}），` +
-        "暂无待发送时刻，本次跳过（手动勾选 force 或 FORCE_SEND=true 可强制）。",
+        "暂无待发送时刻，本次跳过（手动触发并勾选 force 可立即发送）。",
     );
     return;
   }
@@ -78,10 +78,10 @@ async function main() {
 
   // 无前一日基线：发初始化卡片并建立基线，从次日开始生成差值战报
   if (!prev) {
-    await sendCard({
+    await notifier.send({
       webhook,
       secret,
-      payload: buildInitCard({ personaName, reportDate: today, library: libraryStats(games) }),
+      payload: notifier.buildInit({ personaName, reportDate: today, library: libraryStats(games) }),
     });
     saveState(
       statePath,
@@ -132,16 +132,17 @@ async function main() {
   }
 
   logPreview(diff, achievements);
-  await sendCard({
+  await notifier.send({
     webhook,
     secret,
-    payload: buildReportCard({
+    payload: notifier.buildReport({
       personaName: prev.personaName || personaName,
       reportDate: today,
       diff,
       achievements,
       generatedAt: nowTimeIn(timeZone),
       timeZone,
+      baselineDate: prev.date,
     }),
   });
 
