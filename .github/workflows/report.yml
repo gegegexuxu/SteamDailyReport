@@ -27,10 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
 
@@ -66,7 +66,7 @@ jobs:
       - name: 上传最新快照
         # 仅在脚本真正发送并更新了状态时上传（窗口未形成/已发送的运行不重复上传）
         if: steps.report.outputs.state_updated == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: steam-report-state
           path: data/state.json
