@@ -1,0 +1,77 @@
+name: Daily Steam Report
+
+on:
+  schedule:
+    # GitHub Actions 的 cron 无法读取仓库变量，因此用固定频率轮询实现「发送时间可配置」：
+    # 脚本按 REPORT_TIME（Settings → Secrets and variables → Actions → Variables）判断
+    # 是否到点，未到点的轮询直接跳过（见 scripts/daily-report.js）。REPORT_TIME 支持多个时刻。
+    # 错开整点调度高峰可减少延迟；定时有几分钟延迟属正常。
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "强制发送（忽略发送时刻与当日已发送检查）"
+        type: boolean
+        default: false
+
+# actions:read 用于下载历史 Artifact 快照；无需仓库写权限
+permissions:
+  actions: read
+  contents: read
+
+# 防止并发运行导致快照竞争
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 恢复上次快照
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 查找最新一份未过期的 steam-report-state Artifact
+          JSON=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=steam-report-state&per_page=20")
+          URL=$(echo "$JSON" | jq -r '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].archive_download_url // empty')
+          if [ -n "$URL" ]; then
+            mkdir -p data
+            gh api "${URL}" > /tmp/state.zip
+            unzip -o /tmp/state.zip -d data
+            echo "✅ 已恢复上次快照："
+            ls -l data
+          else
+            echo "🆕 未找到历史快照，本次将初始化基线"
+          fi
+
+      - name: 生成并发送战报
+        id: report
+        env:
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          STEAM_ID: ${{ secrets.STEAM_ID }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE }}
+          REPORT_TIME: ${{ vars.REPORT_TIME }}
+          FORCE_SEND: ${{ inputs.force && 'true' || 'false' }}
+        run: node scripts/daily-report.js
+
+      - name: 上传最新快照
+        # 仅在脚本真正发送并更新快照时上传（轮询跳过的运行不重复上传）
+        if: steps.report.outputs.state_updated == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-report-state
+          path: data/state.json
+          retention-days: 90
+          if-no-files-found: ignore

@@ -1,0 +1,15 @@
+{
+  "name": "steam-daily-report",
+  "version": "1.0.0",
+  "description": "Steam 每日游戏战报：GitHub Actions 定时拉取 Steam Web API，与上次快照差值后推送飞书卡片",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env scripts/daily-report.js",
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+# 本地运行产生的快照（CI 中快照保存在 Actions Artifact，不进 Git）
+data/state.json
+
+*.log
