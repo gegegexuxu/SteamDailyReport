@@ -39,8 +39,12 @@
 
 ### 3. 获取 SteamID64 与 API Key
 
-- **SteamID64**：打开 [steamid.io](https://steamid.io)，粘贴你的 Steam 主页链接（或搜昵称），复制结果里的 17 位数字（以 `7656119` 开头）；
-- **API Key**：打开 <https://steamcommunity.com/dev/apikey>，登录后页面要求填一个域名，**随便填即可**，提交后会显示一串 32 位的 Key。
+- **SteamID64**：先看你的 Steam 主页链接是哪种形式——
+  - `steamcommunity.com/profiles/76561198…/`：`profiles/` 后面那串数字**就是** SteamID64，直接复制；
+  - `steamcommunity.com/id/自定义名/`：这是自定义网址，**不是** SteamID64，到 [steamid.io](https://steamid.io) 粘贴主页链接查一下，复制 17 位数字（以 `7656119` 开头）；
+- **API Key**：打开 <https://steamcommunity.com/dev/apikey>，登录后页面要求填一个域名，**随便填即可**，提交后会显示一串 32 位的 Key。不想在浏览器再登录一次的话：按 **Win+R** 打开「运行」，执行
+  `steam://openurl/https://steamcommunity.com/dev/apikey`
+  会用 Steam 客户端内置浏览器打开该页，自动带上已登录状态。
 
 ### 4. 创建群机器人（飞书 / 钉钉 / 企业微信，三选一）
 
