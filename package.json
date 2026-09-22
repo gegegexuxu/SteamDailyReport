@@ -9,7 +9,8 @@
     "node": ">=22.9"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env scripts/daily-report.js",
+    "start": "node --env-file-if-exists=.env scripts/report.js",
+    "snapshot": "node --env-file-if-exists=.env scripts/snapshot.js",
     "test": "node --test"
   }
 }

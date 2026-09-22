@@ -1,7 +1,7 @@
 // 飞书卡片构建（纯函数，方便单元测试）。
 // 使用飞书经典卡片 JSON（schema 1.0），自定义机器人 Webhook 直接可发。
 import { formatMinutes } from "./diff.js";
-import { baselineNote, formatZhDate, sanitize } from "./text.js";
+import { formatZhDate, sanitize } from "./text.js";
 
 const MAX_ACHIEVEMENT_NAMES = 8;
 const MAX_LIBRARY_NAMES = 10;
@@ -15,7 +15,7 @@ const note = (content) => ({ tag: "note", elements: [plain(content)] });
  * 每日战报卡片。
  * diff 来自 computeDiff()；achievements 为 [{ gameName, total, unlockedCount, added: [{ displayName }] }]
  */
-export function buildReportCard({ personaName, reportDate, diff, achievements, generatedAt, timeZone, baselineDate }) {
+export function buildReportCard({ personaName, reportDate, diff, achievements, generatedAt, timeZone, windowNote = "" }) {
   const played = diff.playedToday ?? [];
   const achievementsWithNew = (achievements ?? []).filter((a) => a.added.length > 0);
   const totalNewAchievements = achievementsWithNew.reduce((sum, a) => sum + a.added.length, 0);
@@ -24,7 +24,7 @@ export function buildReportCard({ personaName, reportDate, diff, achievements, g
 
   if (played.length > 0) {
     elements.push(
-      div(`**${sanitize(personaName)}** 今天游玩 **${formatMinutes(diff.totalTodayMinutes)}**（${played.length} 款游戏）`),
+      div(`**${sanitize(personaName)}** 当日游玩 **${formatMinutes(diff.totalTodayMinutes)}**（${played.length} 款游戏）`),
       div(
         played
           .map(
@@ -35,7 +35,7 @@ export function buildReportCard({ personaName, reportDate, diff, achievements, g
       ),
     );
   } else {
-    elements.push(div(`**${sanitize(personaName)}** 今天没有启动任何游戏，休息日 📚`));
+    elements.push(div(`**${sanitize(personaName)}** 当日没有启动任何游戏，休息日 📚`));
   }
 
   if (achievementsWithNew.length > 0) {
@@ -69,7 +69,7 @@ export function buildReportCard({ personaName, reportDate, diff, achievements, g
   });
   elements.push(
     note(
-      `数据来源 Steam Web API · ${baselineNote(baselineDate, reportDate)}生成于 ${generatedAt}（${timeZone}）· GitHub Actions`,
+      `数据来源 Steam Web API · ${windowNote}生成于 ${generatedAt}（${timeZone}）· GitHub Actions`,
     ),
   );
 

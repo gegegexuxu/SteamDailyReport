@@ -7,25 +7,13 @@ import { join } from "node:path";
 
 import { computeDiff, diffAchievements, formatMinutes, libraryStats } from "../scripts/diff.js";
 import { buildInitCard, buildReportCard } from "../scripts/card.js";
-import { baselineNote, formatZhDate, previousDateString } from "../scripts/text.js";
+import { formatZhDate, windowNote } from "../scripts/text.js";
 import { buildInitMarkdown, buildReportMarkdown } from "../scripts/notifiers/markdown.js";
 import { buildSignedUrl, signDingtalk } from "../scripts/notifiers/dingtalk.js";
 import { resolveNotifier } from "../scripts/notifiers/index.js";
 import { wecom } from "../scripts/notifiers/wecom.js";
 import { signPayload } from "../scripts/feishu.js";
-import {
-  DEFAULT_REPORT_TIME,
-  buildSnapshot,
-  buildState,
-  formatReportTime,
-  hasDueReportTime,
-  loadState,
-  nowTimeIn,
-  parseReportTime,
-  parseReportTimes,
-  saveState,
-  todayIn,
-} from "../scripts/state.js";
+import { buildSnapshot, buildState, loadState, nowTimeIn, pushSnapshot, saveState, todayIn } from "../scripts/state.js";
 
 const game = (name, playtimeForever) => ({ name, playtimeForever, rtimeLastPlayed: 0 });
 
@@ -120,7 +108,7 @@ test("buildReportCard：有游玩 + 成就 + 新入库", () => {
   assert.equal(card.card.header.title.content, "🎮 Steam 每日战报 · 9月22日");
   assert.equal(card.card.header.template, "blue");
   const allText = JSON.stringify(card);
-  assert.ok(allText.includes("今天游玩"));
+  assert.ok(allText.includes("当日游玩"));
   assert.ok(allText.includes("+1.5 小时"));
   assert.ok(allText.includes("首胜"));
   assert.ok(allText.includes("Golf It!"));
@@ -154,15 +142,11 @@ test("formatZhDate", () => {
   assert.equal(formatZhDate("bad"), "bad");
 });
 
-test("previousDateString / baselineNote：跨天基线标注", () => {
-  assert.equal(previousDateString("2026-09-23"), "2026-09-22");
-  assert.equal(previousDateString("2026-03-01"), "2026-02-28"); // 跨月
-  assert.equal(previousDateString("bad"), null);
-  // 基线即昨日（正常情况）→ 不加标注
-  assert.equal(baselineNote("2026-09-22", "2026-09-23"), "");
-  // 基线早于昨日（停更后恢复）→ 标注差值口径
-  assert.equal(baselineNote("2026-09-20", "2026-09-23"), "与 9月20日 以来比较 · ");
-  assert.equal(baselineNote(undefined, "2026-09-23"), "");
+test("windowNote：窗口跨天合并提示", () => {
+  assert.equal(windowNote("2026-09-22", "2026-09-23"), ""); // 相邻两天：正常日报不打扰
+  assert.equal(windowNote("2026-09-23", "2026-09-23"), ""); // 同一天（手动补快照的部分窗口）
+  assert.equal(windowNote("2026-09-20", "2026-09-23"), "跨 9月20日–9月23日 合并 · ");
+  assert.equal(windowNote("bad", "2026-09-23"), "");
 });
 
 test("buildReportMarkdown：游玩列表超过 15 款时截断", () => {
@@ -207,28 +191,28 @@ test("wecom：超长消息按 UTF-8 字节截断到 4096 以内", () => {
   assert.ok(payload.markdown.content.includes("已截断"));
 });
 
-test("战报注明跨天基线：基线非昨日时显示，正常情况不显示", () => {
+test("战报注明跨天合并窗口", () => {
   const diff = computeDiff({ "730": game("CS2", 1000) }, { "730": game("CS2", 1000) });
   const card = buildReportCard({
     personaName: "玩家",
-    reportDate: "2026-09-23",
+    reportDate: "2026-09-20",
     diff,
     achievements: [],
-    generatedAt: "22:00",
+    generatedAt: "08:00",
     timeZone: "Asia/Shanghai",
-    baselineDate: "2026-09-20",
+    windowNote: windowNote("2026-09-20", "2026-09-23"),
   });
-  assert.ok(JSON.stringify(card).includes("与 9月20日 以来比较"));
+  assert.ok(JSON.stringify(card).includes("跨 9月20日–9月23日 合并"));
   const md = buildReportMarkdown({
     personaName: "玩家",
-    reportDate: "2026-09-23",
+    reportDate: "2026-09-22",
     diff,
     achievements: [],
-    generatedAt: "22:00",
+    generatedAt: "08:00",
     timeZone: "Asia/Shanghai",
-    baselineDate: "2026-09-22",
+    windowNote: windowNote("2026-09-22", "2026-09-23"),
   });
-  assert.ok(!md.text.includes("以来比较"));
+  assert.ok(!md.text.includes("合并"));
 });
 
 test("buildReportMarkdown（钉钉/企微共用）：包含核心信息", () => {
@@ -297,57 +281,7 @@ test("resolveNotifier：按域名识别平台，未识别时回退飞书", () =>
   assert.equal(resolveNotifier("https://example.com/hook").name, "feishu");
 });
 
-test("parseReportTime：支持 HH 与 HH:MM，非法返回 null", () => {
-  assert.deepEqual(parseReportTime("22"), { hour: 22, minute: 0 });
-  assert.deepEqual(parseReportTime("22:00"), { hour: 22, minute: 0 });
-  assert.deepEqual(parseReportTime(" 9:05 "), { hour: 9, minute: 5 });
-  assert.deepEqual(parseReportTime(DEFAULT_REPORT_TIME), { hour: 22, minute: 0 });
-  for (const bad of ["25:00", "22:60", "abc", "", "8:5", "-1:00", undefined]) {
-    assert.equal(parseReportTime(bad), null, String(bad));
-  }
-});
-
-test("parseReportTimes：逗号分隔并按时间升序；为空或任一非法返回 null", () => {
-  assert.deepEqual(parseReportTimes("22:00,09:00"), [
-    { hour: 9, minute: 0 },
-    { hour: 22, minute: 0 },
-  ]);
-  assert.deepEqual(parseReportTimes(" 9, 12:30 "), [
-    { hour: 9, minute: 0 },
-    { hour: 12, minute: 30 },
-  ]);
-  assert.equal(parseReportTimes("09:00,bad"), null);
-  assert.equal(parseReportTimes(""), null);
-  assert.equal(parseReportTimes(undefined), null);
-});
-
-test("formatReportTime：补零输出 HH:MM", () => {
-  assert.equal(formatReportTime({ hour: 9, minute: 5 }), "09:05");
-  assert.equal(formatReportTime({ hour: 22, minute: 0 }), "22:00");
-});
-
-test("hasDueReportTime：按报告时区判定到点与当日已发", () => {
-  // 2026-09-23 06:00 UTC = 14:00（Asia/Shanghai）
-  const now = new Date("2026-09-23T06:00:00Z");
-  const slots = parseReportTimes("12:00,22:00");
-  // 尚未到点
-  assert.equal(hasDueReportTime("Asia/Shanghai", parseReportTimes("15:00"), null, now), false);
-  // 恰好到点（含等于）
-  assert.equal(hasDueReportTime("Asia/Shanghai", parseReportTimes("14:00"), null, now), true);
-  // 12:00 已到且今日未发
-  assert.equal(hasDueReportTime("Asia/Shanghai", slots, null, now), true);
-  // 12:00 已满足（13:07 发过）、22:00 未到 → 无待发
-  assert.equal(hasDueReportTime("Asia/Shanghai", slots, { date: "2026-09-23", time: "13:07" }, now), false);
-  // 记录的发送时刻早于 12:00 → 仍需发送
-  assert.equal(hasDueReportTime("Asia/Shanghai", slots, { date: "2026-09-23", time: "11:30" }, now), true);
-  // 昨天发过不影响今天
-  assert.equal(hasDueReportTime("Asia/Shanghai", slots, { date: "2026-09-22", time: "23:59" }, now), true);
-  // 同一时刻在 UTC 时区为 06:00
-  assert.equal(hasDueReportTime("UTC", parseReportTimes("06:00"), null, now), true);
-  assert.equal(hasDueReportTime("UTC", parseReportTimes("06:30"), null, now), false);
-});
-
-test("state：日期工具与读写往返", () => {
+test("state：日期工具与快照读写往返", () => {
   assert.match(todayIn("Asia/Shanghai"), /^\d{4}-\d{2}-\d{2}$/);
   assert.match(nowTimeIn("Asia/Shanghai"), /^\d{2}:\d{2}$/);
 
@@ -361,14 +295,29 @@ test("state：日期工具与读写往返", () => {
       games: { "730": game("CS2", 1) },
       achievements: {},
     });
-    saveState(path, buildState({ prev: snapshot, current: null, lastSent: { date: "2026-09-22", time: "22:01" } }));
-    assert.equal(loadState(path).prev.date, "2026-09-22");
+    saveState(path, buildState({ snapshots: [snapshot], lastSentWindow: null }));
+    const loaded = loadState(path);
+    assert.equal(loaded.version, 3);
+    assert.equal(loaded.snapshots[0].date, "2026-09-22");
+    assert.ok(loaded.snapshots[0].capturedAt); // capturedAt 自动生成
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("state：v1 旧快照自动迁移为 v2（旧快照作为前一日基线）", () => {
+test("state：pushSnapshot 只保留最近两份", () => {
+  const snap = (date) => buildSnapshot({ date, personaName: "玩家", games: {}, achievements: {} });
+  const s1 = pushSnapshot(null, snap("2026-09-21"));
+  assert.equal(s1.snapshots.length, 1);
+  const s2 = pushSnapshot(s1, snap("2026-09-22"));
+  assert.equal(s2.snapshots.length, 2);
+  const s3 = pushSnapshot(s2, snap("2026-09-23"));
+  assert.equal(s3.snapshots.length, 2);
+  assert.deepEqual(s3.snapshots.map((s) => s.date), ["2026-09-22", "2026-09-23"]); // 最旧的被丢弃
+  assert.equal(s3.lastSentWindow, null); // 幂等标记原样透传
+});
+
+test("state：v1 旧快照自动迁移为 v3", () => {
   const dir = mkdtempSync(join(tmpdir(), "sdr-test-"));
   try {
     const path = join(dir, "state.json");
@@ -377,7 +326,7 @@ test("state：v1 旧快照自动迁移为 v2（旧快照作为前一日基线）
       JSON.stringify({
         version: 1,
         lastReportDate: "2026-09-22",
-        capturedAt: "2026-09-22T14:00:00Z",
+        capturedAt: "2026-09-22T14:00:00.000Z",
         personaName: "玩家",
         games: { "730": game("CS2", 1000) },
         achievements: {},
@@ -385,12 +334,33 @@ test("state：v1 旧快照自动迁移为 v2（旧快照作为前一日基线）
       "utf8",
     );
     const state = loadState(path);
-    assert.equal(state.version, 2);
-    assert.equal(state.prev.date, "2026-09-22");
-    assert.equal(state.prev.games["730"].name, "CS2");
-    assert.equal(state.current, null);
-    // 迁移当天视为已全部发过，避免升级当天重复推送
-    assert.deepEqual(state.lastSent, { date: "2026-09-22", time: "23:59" });
+    assert.equal(state.version, 3);
+    assert.equal(state.snapshots.length, 1);
+    assert.equal(state.snapshots[0].date, "2026-09-22");
+    assert.equal(state.snapshots[0].games["730"].name, "CS2");
+    // v1 当天已发过战报，迁移后标记该窗口避免重复推送
+    assert.equal(state.lastSentWindow, "2026-09-22T14:00:00.000Z");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("state：v2 状态自动迁移为 v3", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sdr-test-"));
+  try {
+    const path = join(dir, "state.json");
+    const prev = { date: "2026-09-21", personaName: "玩家", games: { "730": game("CS2", 900) }, achievements: {} };
+    const current = { date: "2026-09-22", personaName: "玩家", games: { "730": game("CS2", 1000) }, achievements: {} };
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 2, prev, current, lastSent: { date: "2026-09-22", time: "22:01" } }),
+      "utf8",
+    );
+    const state = loadState(path);
+    assert.equal(state.version, 3);
+    assert.deepEqual(state.snapshots.map((s) => s.date), ["2026-09-21", "2026-09-22"]);
+    // v2 的 current 只在发送成功后写入，存在即代表该窗口已发过
+    assert.equal(state.lastSentWindow, state.snapshots[1].capturedAt);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

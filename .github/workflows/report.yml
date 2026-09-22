@@ -1,0 +1,74 @@
+name: Steam Daily Report
+
+# 播报：到点对比最近两份快照（默认为昨天 0 点 → 今天 0 点），生成昨日战报并发送。
+# GitHub Actions 的 cron 使用 UTC，北京 8 点 = 0 点 UTC。
+# 想改发送时间：UTC = 北京时间 - 8 小时（换算示例见仓库 ADVANCED.md），定时有几分钟延迟属正常。
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "强制发送（忽略「该窗口已发送」检查）"
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+
+# 与结算工作流共用同一份快照 Artifact，防止并发读写
+concurrency:
+  group: steam-report-state
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 恢复上次快照
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 查找最新一份未过期的 steam-report-state Artifact
+          JSON=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=steam-report-state&per_page=20")
+          URL=$(echo "$JSON" | jq -r '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].archive_download_url // empty')
+          if [ -n "$URL" ]; then
+            mkdir -p data
+            gh api "${URL}" > /tmp/state.zip
+            unzip -o /tmp/state.zip -d data
+            echo "✅ 已恢复上次快照："
+            ls -l data
+          else
+            echo "🆕 未找到历史快照，本次将提示缺少基线"
+          fi
+
+      - name: 生成并发送战报
+        id: report
+        env:
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          STEAM_ID: ${{ secrets.STEAM_ID }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+          REPORT_TIMEZONE: ${{ vars.REPORT_TIMEZONE }}
+          FORCE_SEND: ${{ inputs.force && 'true' || 'false' }}
+        run: node scripts/report.js
+
+      - name: 上传最新快照
+        # 仅在脚本真正发送并更新了状态时上传（窗口未形成/已发送的运行不重复上传）
+        if: steps.report.outputs.state_updated == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-report-state
+          path: data/state.json
+          retention-days: 90
+          if-no-files-found: ignore

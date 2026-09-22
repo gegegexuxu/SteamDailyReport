@@ -1,6 +1,6 @@
 // 通用 Markdown 战报构建（钉钉 / 企业微信群机器人的 markdown 消息共用，纯函数）。
 import { formatMinutes } from "../diff.js";
-import { baselineNote, formatZhDate, sanitize } from "../text.js";
+import { formatZhDate, sanitize } from "../text.js";
 
 const MAX_ACHIEVEMENT_NAMES = 8;
 const MAX_LIBRARY_NAMES = 10;
@@ -8,14 +8,14 @@ const MAX_LIBRARY_NAMES = 10;
 const MAX_PLAYED_GAMES = 15;
 
 /** 每日战报 → { title, text }（title 用作通知栏预览/会话标题，text 为正文） */
-export function buildReportMarkdown({ personaName, reportDate, diff, achievements, generatedAt, timeZone, baselineDate }) {
+export function buildReportMarkdown({ personaName, reportDate, diff, achievements, generatedAt, timeZone, windowNote = "" }) {
   const played = diff.playedToday ?? [];
   const withNew = (achievements ?? []).filter((a) => a.added.length > 0);
   const totalNew = withNew.reduce((sum, a) => sum + a.added.length, 0);
   const blocks = [`### 🎮 Steam 每日战报 · ${formatZhDate(reportDate)}`];
 
   if (played.length > 0) {
-    blocks.push(`**${sanitize(personaName)}** 今天游玩 **${formatMinutes(diff.totalTodayMinutes)}**（${played.length} 款游戏）`);
+    blocks.push(`**${sanitize(personaName)}** 当日游玩 **${formatMinutes(diff.totalTodayMinutes)}**（${played.length} 款游戏）`);
     // 列表项之间需要空行，钉钉/企微客户端才能稳定渲染为多行
     const shown = played
       .slice(0, MAX_PLAYED_GAMES)
@@ -26,7 +26,7 @@ export function buildReportMarkdown({ personaName, reportDate, diff, achievement
     if (played.length > MAX_PLAYED_GAMES) shown.push(`> 共 ${played.length} 款有时长增量，仅列前 ${MAX_PLAYED_GAMES} 款`);
     blocks.push(shown.join("\n\n"));
   } else {
-    blocks.push(`**${sanitize(personaName)}** 今天没有启动任何游戏，休息日 📚`);
+    blocks.push(`**${sanitize(personaName)}** 当日没有启动任何游戏，休息日 📚`);
   }
 
   if (withNew.length > 0) {
@@ -51,7 +51,7 @@ export function buildReportMarkdown({ personaName, reportDate, diff, achievement
   }
 
   blocks.push(`库存游戏 ${diff.library.gameCount} 款 ｜ 总时长 ${formatMinutes(diff.library.totalMinutes)}`);
-  blocks.push(`数据来源 Steam Web API · ${baselineNote(baselineDate, reportDate)}生成于 ${generatedAt}（${timeZone}）· GitHub Actions`);
+  blocks.push(`数据来源 Steam Web API · ${windowNote}生成于 ${generatedAt}（${timeZone}）· GitHub Actions`);
 
   return { title: `🎮 Steam 每日战报 · ${formatZhDate(reportDate)}`, text: blocks.join("\n\n") };
 }

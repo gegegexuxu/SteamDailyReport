@@ -16,19 +16,15 @@ export function formatZhDate(dateStr) {
   return `${month}月${day}日`;
 }
 
-/** "2026-09-22" 的前一天（YYYY-MM-DD）；解析失败返回 null */
-export function previousDateString(dateStr) {
-  const date = new Date(`${dateStr}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return null;
-  date.setUTCDate(date.getUTCDate() - 1);
-  return date.toISOString().slice(0, 10);
-}
-
 /**
- * 生成「与 M月d日 以来比较 · 」前缀，用于跨天补发（停更后恢复）时说明差值口径；
- * 基线就是昨日（正常情况）时返回空串，不打扰日常战报。
+ * 窗口跨天合并提示：某次结算（快照）缺失时，战报窗口会自动跨越多天补发。
+ * 窗口相邻（或同一天）返回空串，不打扰日常战报；跨多天返回「跨 9月20日–9月23日 合并 · 」。
  */
-export function baselineNote(baselineDate, reportDate) {
-  if (!baselineDate || baselineDate === previousDateString(reportDate)) return "";
-  return `与 ${formatZhDate(baselineDate)} 以来比较 · `;
+export function windowNote(baseDate, latestDate) {
+  const from = new Date(`${baseDate}T00:00:00Z`);
+  const to = new Date(`${latestDate}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return "";
+  const days = Math.round((to - from) / 86_400_000);
+  if (days <= 1) return "";
+  return `跨 ${formatZhDate(baseDate)}–${formatZhDate(latestDate)} 合并 · `;
 }
