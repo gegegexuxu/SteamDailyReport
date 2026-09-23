@@ -1,6 +1,6 @@
 // 快照（state.json）读写与时区日期工具。
 // 状态结构 v3：snapshots = 最近两份快照（旧 → 新，[0] 为差值基线/窗口起点，[1] 为窗口终点），
-// lastSentWindow = 已发送窗口终点快照的 capturedAt（幂等标记，防止同一窗口重复推送）。
+// lastSentWindow = 已发送窗口终点快照的 capturedAt（幂等标记，兼作「已被播报消费」标记，见 pushSnapshot）。
 // CI 中该文件由 Actions Artifact 提供/上传，不进入 Git 历史。
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -101,9 +101,19 @@ export function buildSnapshot({ date, personaName, games, achievements, captured
   return { date, capturedAt, personaName, games, achievements };
 }
 
-/** 追加快照，只保留最近两份（[0] 差值基线，[1] 窗口终点）；lastSentWindow 原样保留 */
+/**
+ * 追加快照，只保留最近两份（[0] 差值基线，[1] 窗口终点）；lastSentWindow 原样保留。
+ * 例外：同日重拍且最新一份尚未被播报消费（capturedAt ≠ lastSentWindow）时直接顶替它——
+ * 同一天的新快照是同一边界的新数据，不是新窗口，不该挤掉差值基线。
+ */
 export function pushSnapshot(state, snapshot) {
-  const snapshots = [...(state?.snapshots ?? []), snapshot].slice(-MAX_SNAPSHOTS);
+  const prev = state?.snapshots ?? [];
+  const latest = prev.at(-1);
+  const isRework =
+    latest && latest.date === snapshot.date && latest.capturedAt !== state?.lastSentWindow;
+  const snapshots = isRework
+    ? [...prev.slice(0, -1), snapshot]
+    : [...prev, snapshot].slice(-MAX_SNAPSHOTS);
   return { version: STATE_VERSION, snapshots, lastSentWindow: state?.lastSentWindow ?? null };
 }
 

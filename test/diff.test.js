@@ -324,6 +324,46 @@ test("state：pushSnapshot 只保留最近两份", () => {
   assert.equal(s3.lastSentWindow, null); // 幂等标记原样透传
 });
 
+test("state：pushSnapshot 同日重复快照顶替未播报的最新一份，不挤掉基线", () => {
+  const snap = (date, capturedAt) =>
+    buildSnapshot({ date, capturedAt, personaName: "玩家", games: {}, achievements: {} });
+  const s1 = snap("2026-09-21", "2026-09-21T16:00:00.000Z");
+  const s2 = snap("2026-09-22", "2026-09-22T16:00:00.000Z");
+  const state = { version: 3, snapshots: [s1, s2], lastSentWindow: null };
+
+  // D2 尚未被播报消费（凌晨误跑第二次快照）→ 顶替 s2，保住 s1，8 点照常播 D1 全天
+  const next = pushSnapshot(state, snap("2026-09-22", "2026-09-22T16:05:00.000Z"));
+  assert.equal(next.snapshots.length, 2);
+  assert.equal(next.snapshots[0], s1);
+  assert.equal(next.snapshots[1].capturedAt, "2026-09-22T16:05:00.000Z");
+});
+
+test("state：pushSnapshot 同日快照但最新一份已播报 → 正常追加（一天多次结算）", () => {
+  const snap = (date, capturedAt) =>
+    buildSnapshot({ date, capturedAt, personaName: "玩家", games: {}, achievements: {} });
+  const s1 = snap("2026-09-21", "2026-09-21T16:00:00.000Z");
+  const s2 = snap("2026-09-22", "2026-09-22T00:00:00.000Z"); // 0 点结算
+  // 8 点已播报（lastSentWindow 指向 s2），12 点的同日结算应作为上午窗口终点正常追加
+  const consumed = { version: 3, snapshots: [s1, s2], lastSentWindow: s2.capturedAt };
+  const noon = snap("2026-09-22", "2026-09-22T04:00:00.000Z");
+  const next = pushSnapshot(consumed, noon);
+  assert.deepEqual(
+    next.snapshots.map((s) => s.capturedAt),
+    [s2.capturedAt, noon.capturedAt],
+  );
+});
+
+test("state：pushSnapshot 仅一份快照时同日重拍直接顶替", () => {
+  const snap = (date, capturedAt) =>
+    buildSnapshot({ date, capturedAt, personaName: "玩家", games: {}, achievements: {} });
+  const next = pushSnapshot(
+    { version: 3, snapshots: [snap("2026-09-22", "2026-09-22T10:00:00.000Z")], lastSentWindow: null },
+    snap("2026-09-22", "2026-09-22T10:05:00.000Z"),
+  );
+  assert.equal(next.snapshots.length, 1); // 不留 [D1, D1-1] 的同日假窗口
+  assert.equal(next.snapshots[0].capturedAt, "2026-09-22T10:05:00.000Z");
+});
+
 test("state：v1 旧快照自动迁移为 v3", () => {
   const dir = mkdtempSync(join(tmpdir(), "sdr-test-"));
   try {
