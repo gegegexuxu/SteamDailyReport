@@ -48,8 +48,9 @@ export async function getPlayerSummary({ apiKey, steamId }) {
 }
 
 /**
- * 全量游戏库。返回 { gameCount, games }，
- * games 为以 appId 字符串为键的映射：{ [appId]: { name, playtimeForever, rtimeLastPlayed } }
+ * 全量游戏库。返回 { gameCount, games, statsVisible }，
+ * games 为以 appId 字符串为键的映射：{ [appId]: { name, playtimeForever, rtimeLastPlayed } }，
+ * statsVisible 为有公开成就数据的 appId 列表（仅初始化统计全成就时使用，不入快照）。
  */
 export async function getOwnedGames({ apiKey, steamId }) {
   const data = await fetchJson(
@@ -70,14 +71,43 @@ export async function getOwnedGames({ apiKey, steamId }) {
   }
 
   const gamesMap = {};
+  const statsVisible = [];
   for (const game of games) {
     gamesMap[String(game.appid)] = {
       name: game.name || `App ${game.appid}`,
       playtimeForever: game.playtime_forever ?? 0,
       rtimeLastPlayed: game.rtime_last_played ?? 0,
     };
+    if (game.has_community_visible_stats) statsVisible.push(String(game.appid));
   }
-  return { gameCount: response.game_count ?? games.length, games: gamesMap };
+  return { gameCount: response.game_count ?? games.length, games: gamesMap, statsVisible };
+}
+
+/**
+ * 全成就游戏数：逐款查询成就（Steam 无批量端点），unlocked 数等于总数即计为全成就。
+ * 单款失败（无成就/未公开/重试后仍限流）跳过不计；一款都没查成功返回 null（视为无法统计）。
+ */
+export async function countPerfectGames({ apiKey, steamId, appIds, concurrency = 8 }) {
+  const queue = [...(appIds ?? [])];
+  let checked = 0;
+  let perfect = 0;
+
+  async function worker() {
+    for (;;) {
+      const appId = queue.shift();
+      if (appId === undefined) return;
+      try {
+        const { total, unlocked } = await getPlayerAchievements({ apiKey, steamId, appId });
+        checked += 1;
+        if (total > 0 && unlocked.length === total) perfect += 1;
+      } catch {
+        // 无成就数据的游戏会走 fetchJson 的 400 快速失败路径，直接跳过
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+  return checked > 0 ? perfect : null;
 }
 
 /**

@@ -4,7 +4,7 @@ import { appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getOwnedGames, getPlayerSummary } from "./steam.js";
+import { countPerfectGames, getOwnedGames, getPlayerSummary } from "./steam.js";
 import { libraryStats } from "./diff.js";
 import { resolveNotifier } from "./notifiers/index.js";
 import { DEFAULT_TIMEZONE, buildSnapshot, loadState, pushSnapshot, saveState, todayIn } from "./state.js";
@@ -26,7 +26,7 @@ async function main() {
   const state = loadState(statePath);
 
   const { personaName } = await getPlayerSummary({ apiKey, steamId });
-  const { games } = await getOwnedGames({ apiKey, steamId });
+  const { games, statsVisible } = await getOwnedGames({ apiKey, steamId });
   const today = todayIn(timeZone);
   console.log(`📸 快照日期: ${today}（${timeZone}）· ${personaName} · 库存 ${Object.keys(games).length} 款游戏`);
 
@@ -46,20 +46,28 @@ async function main() {
   console.log(`✅ 快照已保存（现有 ${nextState.snapshots.length} 份，最近两份构成一个统计窗口）`);
 
   if (isFirst) {
-    await sendInitCard({ personaName, today, games });
+    await sendInitCard({ personaName, today, games, statsVisible, apiKey, steamId });
     console.log("🆕 基线已建立：下次快照生成后，发送流程将产出第一份战报");
   }
 }
 
-async function sendInitCard({ personaName, today, games }) {
+async function sendInitCard({ personaName, today, games, statsVisible = [], apiKey, steamId }) {
   const webhook = process.env.NOTIFY_WEBHOOK || "";
   try {
     if (!webhook) throw new Error("未配置 NOTIFY_WEBHOOK");
     const notifier = resolveNotifier(webhook);
+
+    // 全成就统计需逐款查询成就接口，只在建基线时做一次；查不出结果（null）则卡片隐藏该行
+    let perfectCount;
+    if (statsVisible.length > 0) {
+      console.log(`🔍 正在统计全成就游戏（${statsVisible.length} 款，约需几十秒）…`);
+      perfectCount = await countPerfectGames({ apiKey, steamId, appIds: statsVisible });
+    }
+
     await notifier.send({
       webhook,
       secret: process.env.NOTIFY_SECRET || "",
-      payload: notifier.buildInit({ personaName, reportDate: today, library: libraryStats(games) }),
+      payload: notifier.buildInit({ personaName, reportDate: today, library: libraryStats(games), perfectCount }),
     });
   } catch (err) {
     console.warn(`⚠️ 初始化卡片未发送（不影响快照）: ${err.message}`);

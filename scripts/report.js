@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { getAchievementSchema, getPlayerAchievements } from "./steam.js";
 import { computeDiff, diffAchievements, formatMinutes } from "./diff.js";
+import { computeMilestones, computeMvp, lastPlayedGame, pickTitle } from "./highlights.js";
 import { resolveNotifier } from "./notifiers/index.js";
 import { DEFAULT_TIMEZONE, buildState, loadState, nowTimeIn, saveState } from "./state.js";
 import { windowNote } from "./text.js";
@@ -97,6 +98,20 @@ async function main() {
       generatedAt: nowTimeIn(timeZone),
       timeZone,
       windowNote: windowNote(base.date, latest.date),
+      extras: {
+        titleText: pickTitle(diff.totalTodayMinutes),
+        mvp: computeMvp(diff.playedToday),
+        milestoneLines: computeMilestones({
+          baseGames: base.games,
+          latestGames: latest.games,
+          achievements,
+        }),
+        // 休息日才需要「上次开团」；只认窗口起点之前玩过的游戏，避免与「当日没有启动任何游戏」矛盾
+        lastPlayed:
+          diff.playedToday.length === 0
+            ? lastPlayedGame(latest.games, timeZone, Math.floor(Date.parse(base.capturedAt) / 1000))
+            : null,
+      },
     }),
   });
 

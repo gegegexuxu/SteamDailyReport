@@ -18,7 +18,7 @@ export function formatZhDate(dateStr) {
 
 /**
  * 窗口跨天合并提示：某次结算（快照）缺失时，战报窗口会自动跨越多天补发。
- * 窗口相邻（或同一天）返回空串，不打扰日常战报；跨多天返回「跨 9月20日–9月23日 合并 · 」。
+ * 窗口相邻（或同一天）返回空串，不打扰日常战报；跨多天返回「统计 9月20日–9月23日 · 」。
  */
 export function windowNote(baseDate, latestDate) {
   const from = new Date(`${baseDate}T00:00:00Z`);
@@ -26,5 +26,5 @@ export function windowNote(baseDate, latestDate) {
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return "";
   const days = Math.round((to - from) / 86_400_000);
   if (days <= 1) return "";
-  return `跨 ${formatZhDate(baseDate)}–${formatZhDate(latestDate)} 合并 · `;
+  return `统计 ${formatZhDate(baseDate)}–${formatZhDate(latestDate)} · `;
 }

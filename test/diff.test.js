@@ -130,10 +130,14 @@ test("buildReportCard：休息日卡片", () => {
   assert.ok(JSON.stringify(card).includes("休息日"));
 });
 
-test("buildInitCard：包含库存统计", () => {
-  const card = buildInitCard({ personaName: "玩家", reportDate: "2026-09-22", library: { gameCount: 88, totalMinutes: 60000 } });
-  assert.ok(JSON.stringify(card).includes("88"));
-  assert.ok(JSON.stringify(card).includes("1000 小时"));
+test("buildInitCard：包含库存统计与全成就（缺省隐藏）", () => {
+  const card = buildInitCard({ personaName: "玩家", library: { gameCount: 88, totalMinutes: 60000 }, perfectCount: 3 });
+  const allText = JSON.stringify(card);
+  assert.ok(allText.includes("88"));
+  assert.ok(allText.includes("1000 小时"));
+  assert.ok(allText.includes("全成就 **3** 款"));
+  const without = buildInitCard({ personaName: "玩家", library: { gameCount: 88, totalMinutes: 60000 } });
+  assert.ok(!JSON.stringify(without).includes("全成就"));
 });
 
 test("formatZhDate", () => {
@@ -145,7 +149,7 @@ test("formatZhDate", () => {
 test("windowNote：窗口跨天合并提示", () => {
   assert.equal(windowNote("2026-09-22", "2026-09-23"), ""); // 相邻两天：正常日报不打扰
   assert.equal(windowNote("2026-09-23", "2026-09-23"), ""); // 同一天（手动补快照的部分窗口）
-  assert.equal(windowNote("2026-09-20", "2026-09-23"), "跨 9月20日–9月23日 合并 · ");
+  assert.equal(windowNote("2026-09-20", "2026-09-23"), "统计 9月20日–9月23日 · ");
   assert.equal(windowNote("bad", "2026-09-23"), "");
 });
 
@@ -202,7 +206,7 @@ test("战报注明跨天合并窗口", () => {
     timeZone: "Asia/Shanghai",
     windowNote: windowNote("2026-09-20", "2026-09-23"),
   });
-  assert.ok(JSON.stringify(card).includes("跨 9月20日–9月23日 合并"));
+  assert.ok(JSON.stringify(card).includes("统计 9月20日–9月23日"));
   const md = buildReportMarkdown({
     personaName: "玩家",
     reportDate: "2026-09-22",
@@ -250,15 +254,18 @@ test("buildReportMarkdown：休息日", () => {
   assert.ok(text.includes("休息日"));
 });
 
-test("buildInitMarkdown：包含库存统计", () => {
+test("buildInitMarkdown：包含库存统计与全成就（缺省隐藏）", () => {
   const { title, text } = buildInitMarkdown({
     personaName: "玩家",
-    reportDate: "2026-09-22",
     library: { gameCount: 88, totalMinutes: 60000 },
+    perfectCount: 2,
   });
-  assert.ok(title.includes("初始化"));
+  assert.ok(title.includes("存档已创建"));
   assert.ok(text.includes("88"));
   assert.ok(text.includes("1000 小时"));
+  assert.ok(text.includes("全成就 **2** 款"));
+  const { text: bare } = buildInitMarkdown({ personaName: "玩家", library: { gameCount: 88, totalMinutes: 60000 } });
+  assert.ok(!bare.includes("全成就"));
 });
 
 test("signDingtalk：与钉钉规范一致（HMAC-SHA256，key=secret，消息=timestamp\\nsecret）", () => {
