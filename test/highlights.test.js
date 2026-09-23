@@ -37,7 +37,6 @@ test("computeMilestones：单游戏跨档只播报一次", () => {
   assert.deepEqual(computeMilestones({ baseGames: base, latestGames: latest, achievements: [] }), [
     "🎉 Dota 2 累计突破 50 小时",
   ]);
-  // 已过档位后继续游玩，不重复播报
   const later = { "570": game("Dota 2", 53 * 60), "730": game("CS2", 600) };
   assert.deepEqual(computeMilestones({ baseGames: latest, latestGames: later, achievements: [] }), []);
 });
@@ -112,7 +111,6 @@ test("lastPlayedGame：窗口内动过的游戏不计（当日新买即玩等）
     "990080": game("新买即玩", 300, inWindow), // computeDiff 不计其时长 → 走休息日分支
     "570": game("Dota 2", 100, Math.floor(Date.UTC(2026, 8, 20, 16, 0) / 1000)), // 北京 9月21日
   };
-  // 窗口内动过的新游戏被截止时间排除，回退到窗口前玩过的 Dota 2
   assert.deepEqual(lastPlayedGame(games, "Asia/Shanghai", before), { name: "Dota 2", lastDate: "9月21日" });
   // 全部都在窗口内动过 → 隐藏该行，避免与「当日没有启动任何游戏」矛盾
   assert.equal(lastPlayedGame({ "990080": game("新买即玩", 300, inWindow) }, "Asia/Shanghai", before), null);

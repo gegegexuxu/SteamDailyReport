@@ -53,7 +53,6 @@ async function main() {
   console.log(`📊 战报窗口: ${base.date} → ${latest.date}（${timeZone}）`);
   const diff = computeDiff(base.games, latest.games);
 
-  // 仅为窗口内有时长增量的游戏查询成就（限量，失败则跳过该游戏成就）
   const achievements = [];
   const nextAchievements = { ...(latest.achievements ?? {}) };
   const gamesToCheck = diff.playedToday.slice(0, ACHIEVEMENT_GAME_LIMIT);
@@ -106,7 +105,7 @@ async function main() {
           latestGames: latest.games,
           achievements,
         }),
-        // 休息日才需要「上次开团」；只认窗口起点之前玩过的游戏，避免与「当日没有启动任何游戏」矛盾
+        // 休息日才展示「上次开团」，且只认窗口起点之前玩过的游戏
         lastPlayed:
           diff.playedToday.length === 0
             ? lastPlayedGame(latest.games, timeZone, Math.floor(Date.parse(base.capturedAt) / 1000))
