@@ -30,8 +30,7 @@ async function main() {
   const today = todayIn(timeZone);
   console.log(`📸 快照日期: ${today}（${timeZone}）· ${personaName} · 库存 ${Object.keys(games).length} 款游戏`);
 
-  // 成就集沿用最近一份快照的记录；真正按窗口查询成就是在发送时（见 report.js），
-  // 查询结果会写回快照，作为下个窗口的成就基线
+  // 成就集沿用上一份快照；按窗口查询在发送时做（report.js），结果写回作下个窗口基线
   const snapshot = buildSnapshot({
     date: today,
     personaName,
@@ -74,8 +73,7 @@ async function sendInitCard({ personaName, today, games, statsVisible = [], apiK
   }
 }
 
-// 告知 CI 本次运行更新了快照、需要上传 Artifact（见 workflow 中的 state_updated 条件）；
-// 本地运行没有 GITHUB_OUTPUT，静默忽略
+// 告知 CI 需上传 Artifact；本地运行没有 GITHUB_OUTPUT，静默忽略
 function markStateUpdated() {
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, "state_updated=true\n");

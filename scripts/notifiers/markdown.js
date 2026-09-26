@@ -7,10 +7,7 @@ const MAX_LIBRARY_NAMES = 10;
 // 游玩列表截断：防止重度玩家的一天撑爆企微 4096 字节消息上限
 const MAX_PLAYED_GAMES = 15;
 
-/**
- * 每日战报 → { title, text }（title 用作通知栏预览/会话标题，text 为正文）。
- * extras 为可选亮点（见 highlights.js）：{ titleText, mvp: { appId, sharePercent }, milestoneLines, lastPlayed: { name, lastDate } }
- */
+/** 每日战报 → { title, text }（title 用作通知栏预览/会话标题）；extras 结构同 card.js */
 export function buildReportMarkdown({ personaName, reportDate, diff, achievements, generatedAt, timeZone, windowNote = "", extras = {} }) {
   const { titleText = "", mvp = null, milestoneLines = [], lastPlayed = null } = extras;
   const played = diff.playedToday ?? [];

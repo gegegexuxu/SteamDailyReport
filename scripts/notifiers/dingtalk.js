@@ -1,6 +1,4 @@
-// 钉钉自定义机器人：markdown 消息 + 加签安全设置。
-// 加签：以 secret 为 key、`${timestamp}\n${secret}` 为消息计算 HmacSHA256，
-// base64 + URL 编码后作为 timestamp/sign 查询参数拼到 Webhook 上（注意与飞书签名算法不同）。
+// 钉钉自定义机器人：markdown 消息 + 加签安全设置（签名算法与飞书不同，勿混用）。
 import { createHmac } from "node:crypto";
 import { fatalError, postJson } from "./http.js";
 import { buildInitMarkdown, buildReportMarkdown } from "./markdown.js";

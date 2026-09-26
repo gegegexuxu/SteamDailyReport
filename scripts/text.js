@@ -16,10 +16,7 @@ export function formatZhDate(dateStr) {
   return `${month}月${day}日`;
 }
 
-/**
- * 窗口跨天合并提示：某次结算（快照）缺失时，战报窗口会自动跨越多天补发。
- * 窗口相邻（或同一天）返回空串，不打扰日常战报；跨多天返回「统计 9月20日–9月23日 · 」。
- */
+/** 窗口跨天合并提示：相邻或同天返回空串，跨多天返回「统计 9月20日–9月23日 · 」 */
 export function windowNote(baseDate, latestDate) {
   const from = new Date(`${baseDate}T00:00:00Z`);
   const to = new Date(`${latestDate}T00:00:00Z`);

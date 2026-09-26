@@ -9,10 +9,7 @@ export function fatalError(message) {
   return Object.assign(new Error(message), { fatal: true });
 }
 
-/**
- * POST JSON 并校验响应。parseResult(res, data) 返回 null 表示成功，
- * 返回 Error 表示失败（标记 fatal 则不再重试）。默认重试 3 次。
- */
+/** POST JSON 并校验响应；parseResult 返回 null 成功 / Error 失败（标记 fatal 则不重试） */
 export async function postJson(url, body, { parseResult }) {
   let lastError;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {

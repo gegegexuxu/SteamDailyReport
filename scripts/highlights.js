@@ -4,10 +4,9 @@ import { formatZhDate, sanitize } from "./text.js";
 
 /** 单游戏 / 库存总时长的播报档位（小时）：上次未达、这次达成才播报 */
 const HOUR_TIERS = [10, 25, 50, 100, 200, 500, 1000, 2000, 5000];
-/** 全成就鼓励：窗口内解锁了成就且距全成就 ≤ 该值时播报 */
+/** 全成就鼓励：窗口内有新解锁且距全成就 ≤ 该值时播报 */
 const PERFECT_REMAINING = 5;
 
-/** 当日称号：≥5 小时肝帝、≥2 小时在线、>0 小酌；没玩返回空串 */
 export function pickTitle(totalTodayMinutes) {
   if (!(totalTodayMinutes > 0)) return "";
   if (totalTodayMinutes >= 300) return "今日肝帝 👑";
@@ -15,10 +14,7 @@ export function pickTitle(totalTodayMinutes) {
   return "小酌怡情 🍵";
 }
 
-/**
- * 今日 MVP：当日玩最久的游戏（playedToday 已按当日时长降序，取首项）。
- * 多款游戏时附带占当日总时长的百分比；单款 100% 没有信息量，只给徽章。
- */
+/** 今日 MVP：playedToday 首项；单款 100% 无信息量，不给占比 */
 export function computeMvp(playedToday) {
   const played = playedToday ?? [];
   if (played.length === 0) return null;
@@ -28,13 +24,7 @@ export function computeMvp(playedToday) {
   return { appId: played[0].appId, sharePercent };
 }
 
-/**
- * 里程碑播报，返回渲染就绪的行数组（无里程碑为空数组，渲染层整段隐藏）：
- * - 单游戏累计时长跨档（与 computeDiff 一致，新入库游戏因历史时长未知不播报；
- *   长合并窗口一次跨过多档时取最高档）
- * - 库存总时长跨档（同样取最高档）
- * - 全成就：本窗口有新解锁且距全成就 ≤5 个 →「再拿 N 个」；本窗口集齐 → 达成庆祝
- */
+/** 里程碑播报：单游戏/库存总时长跨档 + 全成就达成或临近；空数组时渲染层整段隐藏 */
 export function computeMilestones({ baseGames, latestGames, achievements }) {
   const lines = [];
 
@@ -65,12 +55,8 @@ export function computeMilestones({ baseGames, latestGames, achievements }) {
   return lines;
 }
 
-/**
- * 休息日的「最近在玩」：rtimeLastPlayed 最近且确实玩过的游戏。
- * beforeUnixSec 为统计窗口起点的 unix 秒——窗口内动过的游戏（当日新买即玩、
- * 打开不到一分钟等）不计，否则「上次开团」会与「当日没有启动任何游戏」自相矛盾。
- * 返回 { name, lastDate }（name 未清洗，由渲染层 sanitize）或 null（窗口前从未玩过）。
- */
+/** 休息日的「最近在玩」：rtimeLastPlayed 最近的游戏；beforeUnixSec（窗口起点）内动过的不计，
+ *  否则与「当日没有启动任何游戏」矛盾。返回 { name, lastDate }（name 由渲染层 sanitize）。 */
 export function lastPlayedGame(games, timeZone, beforeUnixSec = Infinity) {
   let best = null;
   for (const game of Object.values(games ?? {})) {

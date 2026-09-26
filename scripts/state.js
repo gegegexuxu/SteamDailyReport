@@ -25,7 +25,7 @@ export function nowTimeIn(timeZone = DEFAULT_TIMEZONE, now = new Date()) {
   }).format(now);
 }
 
-/** 读取快照；不存在或损坏时返回 null（按首次运行处理），不让进程崩溃。v1/v2 旧状态自动迁移为 v3。 */
+/** 读取快照；不存在或损坏时返回 null（按首次运行处理），v1/v2 旧状态自动迁移为 v3 */
 export function loadState(filePath) {
   let parsed;
   try {
@@ -90,21 +90,18 @@ function isValidState(state) {
   );
 }
 
-/** 写入快照（自动创建目录） */
 export function saveState(filePath, state) {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, JSON.stringify(state, null, 2) + "\n", "utf8");
 }
 
-/** 组装某日某时刻的累计值快照 */
 export function buildSnapshot({ date, personaName, games, achievements, capturedAt = new Date().toISOString() }) {
   return { date, capturedAt, personaName, games, achievements };
 }
 
 /**
  * 追加快照，只保留最近两份（[0] 差值基线，[1] 窗口终点）；lastSentWindow 原样保留。
- * 例外：同日重拍且最新一份尚未被播报消费（capturedAt ≠ lastSentWindow）时直接顶替它——
- * 同一天的新快照是同一边界的新数据，不是新窗口，不该挤掉差值基线。
+ * 同日重拍且最新一份尚未被播报（capturedAt ≠ lastSentWindow）时直接顶替，不挤掉差值基线。
  */
 export function pushSnapshot(state, snapshot) {
   const prev = state?.snapshots ?? [];
@@ -117,7 +114,6 @@ export function pushSnapshot(state, snapshot) {
   return { version: STATE_VERSION, snapshots, lastSentWindow: state?.lastSentWindow ?? null };
 }
 
-/** 组装完整状态对象 */
 export function buildState({ snapshots, lastSentWindow }) {
   return { version: STATE_VERSION, snapshots, lastSentWindow };
 }
