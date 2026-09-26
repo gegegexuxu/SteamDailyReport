@@ -75,6 +75,38 @@ test("diffAchievements：仅返回新增", () => {
   assert.deepEqual(diffAchievements(["A"], [{ apiname: "A", unlocktime: 1 }]), []);
 });
 
+test("diffAchievements：窗口过滤——解锁时间早于窗口起点的不算新增（首见老游戏不虚报历史成就）", () => {
+  const current = [
+    { apiname: "OLD1", unlocktime: 1000 },
+    { apiname: "OLD2", unlocktime: 1999 },
+    { apiname: "EDGE", unlocktime: 2000 }, // 恰好等于窗口起点
+    { apiname: "NEW", unlocktime: 3000 },
+  ];
+  assert.deepEqual(
+    diffAchievements(undefined, current, 2000).map((a) => a.apiname),
+    ["EDGE", "NEW"],
+  );
+  // 基线里已有的即使解锁时间落在窗口内也不重复计
+  assert.deepEqual(
+    diffAchievements(["EDGE"], [{ apiname: "EDGE", unlocktime: 3000 }], 2000).map((a) => a.apiname),
+    [],
+  );
+});
+
+test("diffAchievements：unlocktime 缺失（0）视为未知，保守计入避免漏报", () => {
+  assert.deepEqual(
+    diffAchievements([], [{ apiname: "X", unlocktime: 0 }], 2000).map((a) => a.apiname),
+    ["X"],
+  );
+});
+
+test("diffAchievements：不传窗口起点保持旧行为（基线没有即算新增）", () => {
+  assert.deepEqual(
+    diffAchievements([], [{ apiname: "OLD", unlocktime: 1 }]).map((a) => a.apiname),
+    ["OLD"],
+  );
+});
+
 test("formatMinutes", () => {
   assert.equal(formatMinutes(30), "30 分钟");
   assert.equal(formatMinutes(60), "1 小时");

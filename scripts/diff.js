@@ -11,13 +11,8 @@ export function libraryStats(games) {
 }
 
 /**
- * 对比游戏库，产出战报核心数据。
- *
- * 规则：
- * - 今日时长 = playtimeForever 差值；负数（退款/统计回退）按 0 处理
- * - 上次快照中不存在的游戏记为「新增入库」；因其历史时长未知，
- *   不计入今日游玩时长，避免首见即虚报
- * - playedToday 按今日时长降序
+ * 今日时长 = playtimeForever 差值（负数按 0，退款/统计回退）；首见游戏历史时长未知，
+ * 不计今日时长只记「新增入库」，避免首见即虚报。playedToday 按今日时长降序。
  */
 export function computeDiff(prevGames, currentGames) {
   const playedToday = [];
@@ -53,11 +48,16 @@ export function computeDiff(prevGames, currentGames) {
   };
 }
 
-/** 成就差集：返回本次新增解锁的 apiname 列表（保持本次顺序） */
-export function diffAchievements(prevApinames, currentUnlocked) {
+/** 成就差集（保持本次顺序）。unlocktime 早于 windowStartSec（窗口起点 unix 秒）的不算新增，
+ *  避免首见老游戏把历史成就当新增；unlocktime 缺失（0）视为未知，保守计入。 */
+export function diffAchievements(prevApinames, currentUnlocked, windowStartSec = 0) {
   const prevSet = new Set(prevApinames ?? []);
   return (currentUnlocked ?? [])
-    .filter((item) => !prevSet.has(item.apiname))
+    .filter((item) => {
+      if (prevSet.has(item.apiname)) return false;
+      const knownUnlock = Number.isFinite(windowStartSec) && item.unlocktime > 0;
+      return !knownUnlock || item.unlocktime >= windowStartSec;
+    })
     .map((item) => ({ ...item }));
 }
 

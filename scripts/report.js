@@ -11,7 +11,7 @@ import { resolveNotifier } from "./notifiers/index.js";
 import { DEFAULT_TIMEZONE, buildState, loadState, nowTimeIn, saveState } from "./state.js";
 import { windowNote } from "./text.js";
 
-// 最多为多少款「窗口内有增量」的游戏查询成就，避免库大时 API 调用过量
+// 查成就的游戏数上限，避免库大时 API 调用过量
 const ACHIEVEMENT_GAME_LIMIT = 10;
 
 async function main() {
@@ -51,16 +51,22 @@ async function main() {
   }
 
   console.log(`📊 战报窗口: ${base.date} → ${latest.date}（${timeZone}）`);
+  const windowStartSec = Math.floor(Date.parse(base.capturedAt) / 1000);
   const diff = computeDiff(base.games, latest.games);
 
   const achievements = [];
   const nextAchievements = { ...(latest.achievements ?? {}) };
-  const gamesToCheck = diff.playedToday.slice(0, ACHIEVEMENT_GAME_LIMIT);
+  // 新入库游戏也查成就，否则窗口内的解锁会被窗口过滤永久漏掉
+  const gamesToCheck = [...diff.playedToday, ...diff.newLibraryGames].slice(0, ACHIEVEMENT_GAME_LIMIT);
   if (gamesToCheck.length > 0) console.log(`🔍 查询 ${gamesToCheck.length} 款游戏的成就…`);
   for (const game of gamesToCheck) {
     try {
       const stats = await getPlayerAchievements({ apiKey, steamId, appId: game.appId });
-      const added = diffAchievements(base.achievements?.[game.appId]?.unlockedApinames, stats.unlocked);
+      const added = diffAchievements(
+        base.achievements?.[game.appId]?.unlockedApinames,
+        stats.unlocked,
+        windowStartSec,
+      );
       let nameMap = {};
       if (added.length > 0) {
         try {
@@ -105,17 +111,15 @@ async function main() {
           latestGames: latest.games,
           achievements,
         }),
-        // 休息日才展示「上次开团」，且只认窗口起点之前玩过的游戏
         lastPlayed:
           diff.playedToday.length === 0
-            ? lastPlayedGame(latest.games, timeZone, Math.floor(Date.parse(base.capturedAt) / 1000))
+            ? lastPlayedGame(latest.games, timeZone, windowStartSec)
             : null,
       },
     }),
   });
 
-  // 发送成功后才写状态：记录已发窗口（幂等），并把本次查到的成就集写回最新快照，
-  // 作为下个窗口的成就基线——若发送失败会抛错退出，下次运行重算，不会重复计入
+  // 发送成功后才写状态（成就基线 + 已发窗口标记）；失败抛错退出，下次重算不重复计入
   saveState(
     statePath,
     buildState({
@@ -144,7 +148,7 @@ function logPreview(diff, achievements) {
   }
 }
 
-// 告知 CI 本次运行更新了状态、需要上传 Artifact；本地运行没有 GITHUB_OUTPUT，静默忽略
+// 告知 CI 需上传 Artifact；本地运行没有 GITHUB_OUTPUT，静默忽略
 function markStateUpdated() {
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(process.env.GITHUB_OUTPUT, "state_updated=true\n");
