@@ -13,7 +13,17 @@ import { buildSignedUrl, signDingtalk } from "../scripts/notifiers/dingtalk.js";
 import { resolveNotifier } from "../scripts/notifiers/index.js";
 import { wecom } from "../scripts/notifiers/wecom.js";
 import { signPayload } from "../scripts/feishu.js";
-import { buildSnapshot, buildState, loadState, nowTimeIn, pushSnapshot, saveState, todayIn } from "../scripts/state.js";
+import {
+  buildSnapshot,
+  getAccount,
+  loadState,
+  nowTimeIn,
+  parseSteamIds,
+  pushSnapshot,
+  saveState,
+  todayIn,
+  withAccount,
+} from "../scripts/state.js";
 
 const game = (name, playtimeForever) => ({ name, playtimeForever, rtimeLastPlayed: 0 });
 
@@ -327,6 +337,8 @@ test("state：日期工具与快照读写往返", () => {
   const dir = mkdtempSync(join(tmpdir(), "sdr-test-"));
   try {
     const path = join(dir, "state.json");
+    const ID_A = "76561198000000001";
+    const ID_B = "76561198000000002";
     assert.equal(loadState(path), null); // 不存在 → null
     const snapshot = buildSnapshot({
       date: "2026-09-22",
@@ -334,14 +346,32 @@ test("state：日期工具与快照读写往返", () => {
       games: { "730": game("CS2", 1) },
       achievements: {},
     });
-    saveState(path, buildState({ snapshots: [snapshot], lastSentWindow: null }));
-    const loaded = loadState(path);
-    assert.equal(loaded.version, 3);
-    assert.equal(loaded.snapshots[0].date, "2026-09-22");
-    assert.ok(loaded.snapshots[0].capturedAt); // capturedAt 自动生成
+    saveState(path, withAccount(null, ID_A, { snapshots: [snapshot], lastSentWindow: null }));
+    const loaded = loadState(path, ID_A);
+    assert.equal(loaded.version, 4);
+    assert.equal(loaded.accounts[ID_A].snapshots[0].date, "2026-09-22");
+    assert.ok(loaded.accounts[ID_A].snapshots[0].capturedAt); // capturedAt 自动生成
+    // 多账号分桶：新增账号不影响已有账号，各自独立读写
+    const other = buildSnapshot({ date: "2026-09-23", personaName: "队友", games: {}, achievements: {} });
+    saveState(path, withAccount(loaded, ID_B, { snapshots: [other], lastSentWindow: null }));
+    const reloaded = loadState(path, ID_A);
+    assert.equal(getAccount(reloaded, ID_A).snapshots[0].personaName, "玩家");
+    assert.equal(getAccount(reloaded, ID_B).snapshots[0].personaName, "队友");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("state：parseSteamIds 逗号/空白分隔、去重保序", () => {
+  assert.deepEqual(parseSteamIds(" 76561198000000001 , 76561198000000002\n76561198000000001"), [
+    "76561198000000001",
+    "76561198000000002",
+  ]);
+  assert.deepEqual(parseSteamIds("76561198000000001，76561198000000002；"), [
+    "76561198000000001",
+    "76561198000000002",
+  ]);
+  assert.deepEqual(parseSteamIds(""), []);
 });
 
 test("state：pushSnapshot 只保留最近两份", () => {
@@ -361,7 +391,7 @@ test("state：pushSnapshot 同日重复快照顶替未播报的最新一份，�
     buildSnapshot({ date, capturedAt, personaName: "玩家", games: {}, achievements: {} });
   const s1 = snap("2026-09-21", "2026-09-21T16:00:00.000Z");
   const s2 = snap("2026-09-22", "2026-09-22T16:00:00.000Z");
-  const state = { version: 3, snapshots: [s1, s2], lastSentWindow: null };
+  const state = { snapshots: [s1, s2], lastSentWindow: null };
 
   // D2 尚未被播报消费（凌晨误跑第二次快照）→ 顶替 s2，保住 s1，8 点照常播 D1 全天
   const next = pushSnapshot(state, snap("2026-09-22", "2026-09-22T16:05:00.000Z"));
@@ -376,7 +406,7 @@ test("state：pushSnapshot 同日快照但最新一份已播报 → 正常追加
   const s1 = snap("2026-09-21", "2026-09-21T16:00:00.000Z");
   const s2 = snap("2026-09-22", "2026-09-22T00:00:00.000Z"); // 0 点结算
   // 8 点已播报（lastSentWindow 指向 s2），12 点的同日结算应作为上午窗口终点正常追加
-  const consumed = { version: 3, snapshots: [s1, s2], lastSentWindow: s2.capturedAt };
+  const consumed = { snapshots: [s1, s2], lastSentWindow: s2.capturedAt };
   const noon = snap("2026-09-22", "2026-09-22T04:00:00.000Z");
   const next = pushSnapshot(consumed, noon);
   assert.deepEqual(
@@ -389,7 +419,7 @@ test("state：pushSnapshot 仅一份快照时同日重拍直接顶替", () => {
   const snap = (date, capturedAt) =>
     buildSnapshot({ date, capturedAt, personaName: "玩家", games: {}, achievements: {} });
   const next = pushSnapshot(
-    { version: 3, snapshots: [snap("2026-09-22", "2026-09-22T10:00:00.000Z")], lastSentWindow: null },
+    { snapshots: [snap("2026-09-22", "2026-09-22T10:00:00.000Z")], lastSentWindow: null },
     snap("2026-09-22", "2026-09-22T10:05:00.000Z"),
   );
   assert.equal(next.snapshots.length, 1); // 不留 [D1, D1-1] 的同日假窗口
@@ -412,13 +442,15 @@ test("state：v1 旧快照自动迁移为 v3", () => {
       }),
       "utf8",
     );
-    const state = loadState(path);
-    assert.equal(state.version, 3);
-    assert.equal(state.snapshots.length, 1);
-    assert.equal(state.snapshots[0].date, "2026-09-22");
-    assert.equal(state.snapshots[0].games["730"].name, "CS2");
+    const ID = "76561198000000001";
+    const state = loadState(path, ID);
+    assert.equal(state.version, 4);
+    const bucket = state.accounts[ID];
+    assert.equal(bucket.snapshots.length, 1);
+    assert.equal(bucket.snapshots[0].date, "2026-09-22");
+    assert.equal(bucket.snapshots[0].games["730"].name, "CS2");
     // v1 当天已发过战报，迁移后标记该窗口避免重复推送
-    assert.equal(state.lastSentWindow, "2026-09-22T14:00:00.000Z");
+    assert.equal(bucket.lastSentWindow, "2026-09-22T14:00:00.000Z");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -435,11 +467,39 @@ test("state：v2 状态自动迁移为 v3", () => {
       JSON.stringify({ version: 2, prev, current, lastSent: { date: "2026-09-22", time: "22:01" } }),
       "utf8",
     );
-    const state = loadState(path);
-    assert.equal(state.version, 3);
-    assert.deepEqual(state.snapshots.map((s) => s.date), ["2026-09-21", "2026-09-22"]);
+    const ID = "76561198000000001";
+    const state = loadState(path, ID);
+    assert.equal(state.version, 4);
+    const bucket = state.accounts[ID];
+    assert.deepEqual(bucket.snapshots.map((s) => s.date), ["2026-09-21", "2026-09-22"]);
     // v2 的 current 只在发送成功后写入，存在即代表该窗口已发过
-    assert.equal(state.lastSentWindow, state.snapshots[1].capturedAt);
+    assert.equal(bucket.lastSentWindow, bucket.snapshots[1].capturedAt);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("state：v3 状态自动迁移为 v4，归属配置的第一个账号", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sdr-test-"));
+  try {
+    const path = join(dir, "state.json");
+    const s1 = { date: "2026-09-21", capturedAt: "2026-09-21T16:00:00.000Z", personaName: "玩家", games: {}, achievements: {} };
+    const s2 = { date: "2026-09-22", capturedAt: "2026-09-22T16:00:00.000Z", personaName: "玩家", games: {}, achievements: {} };
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 3, snapshots: [s1, s2], lastSentWindow: s2.capturedAt }),
+      "utf8",
+    );
+    const ID = "76561198000000001";
+    const state = loadState(path, ID);
+    assert.equal(state.version, 4);
+    const bucket = getAccount(state, ID);
+    assert.deepEqual(bucket.snapshots.map((s) => s.date), ["2026-09-21", "2026-09-22"]);
+    assert.equal(bucket.lastSentWindow, s2.capturedAt);
+    // 迁移结果落盘后按 v4 往返，不再重复迁移
+    saveState(path, state);
+    const reloaded = loadState(path, ID);
+    assert.equal(reloaded.accounts[ID].lastSentWindow, s2.capturedAt);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

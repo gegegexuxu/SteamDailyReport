@@ -1,5 +1,6 @@
-// 播报：每天 8 点（北京时间）对比最近两份快照（默认即昨天 0 点 → 今天 0 点），生成昨日战报并发送。
-// 某次结算缺失时窗口自动跨天合并；lastSentWindow 防止同一窗口重复推送（force 可跳过）。
+// 播报：每天 8 点（北京时间）对比各账号最近两份快照（默认即昨天 0 点 → 今天 0 点），生成昨日战报并发送。
+// 支持多账号：STEAM_ID 逗号分隔，每号一张卡片；lastSentWindow 按账号防重（force 可跳过）；
+// 某次结算缺失时窗口自动跨天合并；单个账号失败不影响其他账号。
 import { appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +9,15 @@ import { getAchievementSchema, getPlayerAchievements } from "./steam.js";
 import { computeDiff, diffAchievements, formatMinutes } from "./diff.js";
 import { computeMilestones, computeMvp, lastPlayedGame, pickTitle } from "./highlights.js";
 import { resolveNotifier } from "./notifiers/index.js";
-import { DEFAULT_TIMEZONE, buildState, loadState, nowTimeIn, saveState } from "./state.js";
+import {
+  DEFAULT_TIMEZONE,
+  getAccount,
+  loadState,
+  nowTimeIn,
+  parseSteamIds,
+  saveState,
+  withAccount,
+} from "./state.js";
 import { windowNote } from "./text.js";
 
 // 查成就的游戏数上限，避免库大时 API 调用过量
@@ -16,7 +25,6 @@ const ACHIEVEMENT_GAME_LIMIT = 10;
 
 async function main() {
   const apiKey = process.env.STEAM_API_KEY;
-  const steamId = process.env.STEAM_ID;
   const webhook = process.env.NOTIFY_WEBHOOK || "";
   const secret = process.env.NOTIFY_SECRET || "";
   const forceSend = /^(1|true|yes)$/i.test(process.env.FORCE_SEND ?? "");
@@ -31,26 +39,57 @@ async function main() {
     );
     process.exit(1);
   }
+  const steamIds = parseSteamIds(process.env.STEAM_ID);
+  if (steamIds.length === 0) {
+    console.error("❌ STEAM_ID 未解析出任何账号（多个账号用逗号分隔）。");
+    process.exit(1);
+  }
   const notifier = resolveNotifier(webhook);
 
   const statePath = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "state.json");
-  const state = loadState(statePath);
-  if (!state || state.snapshots.length === 0) {
+  // 旧版单账号状态自动迁移，归属到配置列表的第一个账号
+  let state = loadState(statePath, steamIds[0]);
+  if (!state) {
     console.error("❌ 没有任何快照。请先运行 Snapshot 工作流（本地为 npm run snapshot）建立基线。");
     process.exit(1);
   }
-  if (state.snapshots.length < 2) {
-    console.log("⏭️ 目前只有一份快照（基线），统计窗口尚未形成，本次不发送。下次快照生成后开始出报。");
-    return;
+
+  let sent = false;
+  for (const steamId of steamIds) {
+    const account = getAccount(state, steamId);
+    const label = account?.snapshots.at(-1)?.personaName || steamId;
+    if (!account || account.snapshots.length === 0) {
+      console.log(`⏭️ [${label}] 还没有快照，先运行 Snapshot 工作流（本地为 npm run snapshot）建立基线。`);
+      continue;
+    }
+    if (account.snapshots.length < 2) {
+      console.log(`⏭️ [${label}] 目前只有一份快照（基线），统计窗口尚未形成，本次不发送。下次快照生成后开始出报。`);
+      continue;
+    }
+    if (!forceSend && account.lastSentWindow === account.snapshots.at(-1).capturedAt) {
+      const [base, latest] = account.snapshots;
+      console.log(`⏭️ [${label}] 窗口（${base.date} → ${latest.date}）的战报已发送过，跳过（手动触发并勾选 force 可重发）。`);
+      continue;
+    }
+
+    try {
+      // 每号成功后立即落盘：后面账号失败不会丢掉已发送账号的窗口标记
+      state = withAccount(state, steamId, await sendAccountReport({ apiKey, steamId, account, timeZone, notifier, webhook, secret }));
+      saveState(statePath, state);
+      sent = true;
+      console.log(`✅ [${label}] 战报已发送，状态已更新`);
+    } catch (err) {
+      console.error(`❌ [${label}] 战报生成/发送失败: ${err.message}`);
+    }
   }
 
-  const [base, latest] = state.snapshots;
-  if (!forceSend && state.lastSentWindow === latest.capturedAt) {
-    console.log(`⏭️ 窗口（${base.date} → ${latest.date}）的战报已发送过，跳过（手动触发并勾选 force 可重发）。`);
-    return;
-  }
+  if (sent) markStateUpdated();
+}
 
-  console.log(`📊 战报窗口: ${base.date} → ${latest.date}（${timeZone}）`);
+// 生成并发送单个账号的战报；成功后返回该账号的新状态桶（成就基线 + 已发窗口标记）
+async function sendAccountReport({ apiKey, steamId, account, timeZone, notifier, webhook, secret }) {
+  const [base, latest] = account.snapshots;
+  console.log(`📊 [${latest.personaName || steamId}] 战报窗口: ${base.date} → ${latest.date}（${timeZone}）`);
   const windowStartSec = Math.floor(Date.parse(base.capturedAt) / 1000);
   const diff = computeDiff(base.games, latest.games);
 
@@ -120,15 +159,10 @@ async function main() {
   });
 
   // 发送成功后才写状态（成就基线 + 已发窗口标记）；失败抛错退出，下次重算不重复计入
-  saveState(
-    statePath,
-    buildState({
-      snapshots: [base, { ...latest, achievements: nextAchievements }],
-      lastSentWindow: latest.capturedAt,
-    }),
-  );
-  markStateUpdated();
-  console.log("✅ 战报已发送，状态已更新");
+  return {
+    snapshots: [base, { ...latest, achievements: nextAchievements }],
+    lastSentWindow: latest.capturedAt,
+  };
 }
 
 function logPreview(diff, achievements) {

@@ -1,5 +1,6 @@
 // 结算：每天 0 点（北京时间）抓取 Steam 累计数据并存为快照，划清战报统计窗口的边界。
-// 首次快照会尝试发送初始化卡片；未配置 Webhook 或发送失败仅告警——快照本身才是关键产物。
+// 支持多账号：STEAM_ID 逗号分隔多个 SteamID64，各账号快照独立存桶；
+// 新账号自动建基线并尝试发送初始化卡片；某账号失败不影响其他账号。
 import { appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,11 +8,21 @@ import { fileURLToPath } from "node:url";
 import { countPerfectGames, getOwnedGames, getPlayerSummary } from "./steam.js";
 import { libraryStats } from "./diff.js";
 import { resolveNotifier } from "./notifiers/index.js";
-import { DEFAULT_TIMEZONE, buildSnapshot, loadState, pushSnapshot, saveState, todayIn } from "./state.js";
+import {
+  DEFAULT_TIMEZONE,
+  STATE_VERSION,
+  buildSnapshot,
+  getAccount,
+  loadState,
+  parseSteamIds,
+  pushSnapshot,
+  saveState,
+  todayIn,
+  withAccount,
+} from "./state.js";
 
 async function main() {
   const apiKey = process.env.STEAM_API_KEY;
-  const steamId = process.env.STEAM_ID;
   const missing = ["STEAM_API_KEY", "STEAM_ID"].filter((name) => !process.env[name]);
   if (missing.length > 0) {
     console.error(
@@ -20,33 +31,53 @@ async function main() {
     );
     process.exit(1);
   }
+  const steamIds = parseSteamIds(process.env.STEAM_ID);
+  if (steamIds.length === 0) {
+    console.error("❌ STEAM_ID 未解析出任何账号（多个账号用逗号分隔）。");
+    process.exit(1);
+  }
   const timeZone = process.env.REPORT_TIMEZONE || DEFAULT_TIMEZONE;
 
   const statePath = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "state.json");
-  const state = loadState(statePath);
+  // 旧版单账号状态自动迁移，归属到配置列表的第一个账号
+  let state = loadState(statePath, steamIds[0]) ?? { version: STATE_VERSION, accounts: {} };
 
-  const { personaName } = await getPlayerSummary({ apiKey, steamId });
-  const { games, statsVisible } = await getOwnedGames({ apiKey, steamId });
-  const today = todayIn(timeZone);
-  console.log(`📸 快照日期: ${today}（${timeZone}）· ${personaName} · 库存 ${Object.keys(games).length} 款游戏`);
+  let changed = false;
+  for (const steamId of steamIds) {
+    try {
+      const account = getAccount(state, steamId);
+      const { personaName } = await getPlayerSummary({ apiKey, steamId });
+      const { games, statsVisible } = await getOwnedGames({ apiKey, steamId });
+      const today = todayIn(timeZone);
+      console.log(`📸 [${personaName}] 快照日期: ${today}（${timeZone}）· 库存 ${Object.keys(games).length} 款游戏`);
 
-  // 成就集沿用上一份快照；按窗口查询在发送时做（report.js），结果写回作下个窗口基线
-  const snapshot = buildSnapshot({
-    date: today,
-    personaName,
-    games,
-    achievements: state?.snapshots.at(-1)?.achievements ?? {},
-  });
-  const isFirst = (state?.snapshots.length ?? 0) === 0;
+      // 成就集沿用本账号上一份快照；按窗口查询在发送时做（report.js），结果写回作下个窗口基线
+      const snapshot = buildSnapshot({
+        date: today,
+        personaName,
+        games,
+        achievements: account?.snapshots.at(-1)?.achievements ?? {},
+      });
+      const isFirst = (account?.snapshots.length ?? 0) === 0;
 
-  const nextState = pushSnapshot(state, snapshot);
-  saveState(statePath, nextState);
-  markStateUpdated();
-  console.log(`✅ 快照已保存（现有 ${nextState.snapshots.length} 份，最近两份构成一个统计窗口）`);
+      state = withAccount(state, steamId, pushSnapshot(account, snapshot));
+      changed = true;
+      const count = getAccount(state, steamId).snapshots.length;
+      console.log(`✅ [${personaName}] 快照已保存（现有 ${count} 份，最近两份构成一个统计窗口）`);
 
-  if (isFirst) {
-    await sendInitCard({ personaName, today, games, statsVisible, apiKey, steamId });
-    console.log("🆕 基线已建立：下次快照生成后，发送流程将产出第一份战报");
+      if (isFirst) {
+        await sendInitCard({ personaName, today, games, statsVisible, apiKey, steamId });
+        console.log(`🆕 [${personaName}] 基线已建立：下次快照生成后，发送流程将产出第一份战报`);
+      }
+    } catch (err) {
+      console.error(`❌ [${steamId}] 快照失败，跳过该账号: ${err.message}`);
+    }
+  }
+
+  // 全部账号都失败时不动状态文件，避免用空桶覆盖 CI 里的历史快照
+  if (changed) {
+    saveState(statePath, state);
+    markStateUpdated();
   }
 }
 
@@ -59,7 +90,7 @@ async function sendInitCard({ personaName, today, games, statsVisible = [], apiK
     // 全成就统计需逐款查询成就接口，只在建基线时做一次；查不出结果（null）则卡片隐藏该行
     let perfectCount;
     if (statsVisible.length > 0) {
-      console.log(`🔍 正在统计全成就游戏（${statsVisible.length} 款，约需几十秒）…`);
+      console.log(`🔍 [${personaName}] 正在统计全成就游戏（${statsVisible.length} 款，约需几十秒）…`);
       perfectCount = await countPerfectGames({ apiKey, steamId, appIds: statsVisible });
     }
 
